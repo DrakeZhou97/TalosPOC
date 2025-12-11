@@ -1,3 +1,3 @@
-![Banner](./static/banner.png)
+![Banner](./static/Banner.png)
 
 Lab Assistance Proof of Concept version
