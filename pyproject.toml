@@ -1,0 +1,127 @@
+[project]
+name = "BIG-POC"
+version = "0.1.0"
+description = "Lab Assistant Proof of Concept"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Drake Zhou", email = "zhouyuxuan@c12.ai" }
+]
+dependencies = [
+    "httpx[socks]>=0.28.1",
+    "langchain[openai]>=1.0.8",
+    "langgraph>=1.0.3",
+    "langgraph-sdk>=0.2.9",
+    "langsmith>=0.4.46",
+    "loguru>=0.7.3",
+    "openai>=2.8.1",
+    "pydantic>=2.11.7",
+    "python-dotenv>=1.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "graphviz>=0.21",
+    "ipykernel>=6.30.1",
+    "jupyter-client>=8.6.3",
+    "langchain-core[mermaid]>=1.1.0",
+    "langgraph-cli[inmem]>=0.4.7",
+    "nbqa>=1.9.1",
+    "notebook>=7.4.5",
+    "pandas>=2.3.3",
+    "pandoc>=2.4",
+    "pytest>=8.4.1",
+    "pyzmq>=27.0.1",
+    "ruff>=0.12.8",
+    "scikit-learn>=1.8.0",
+    "seaborn>=0.13.2",
+]
+
+[tool.pyright]
+include = [
+    "src/**/*.py",
+    "**/*.ipynb",
+]
+exclude = [
+    "**/__pycache__",
+    "uv.lock",
+    "./venv/",
+]
+# ignore = []
+analyzeUnannotatedFunctions = true
+venvPath = ".venv"
+defineConstant = { DEBUG = true }
+
+reportMissingImports = "error"
+# reportUnknownMemberType = "none"
+# reportMissingTypeStubs = false
+# reportUnboundVariable = false
+
+pythonVersion = "3.12"
+pythonPlatform = "Linux"
+
+allowedUntypedLibraries = [
+    "evaluate",
+    "matplotlib",
+    "pandas",
+]
+
+typeCheckingMode = "standard"
+
+[tool.black]
+line-length = 120                   # 預設值是 88
+skip-string-normalization = false   # 強制把單引號變成雙引號
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | alembic
+)/
+'''
+
+[tool.ruff]
+line-length = 120
+exclude = [
+    ".git",
+    ".venv",
+    "alembic",
+]
+
+[tool.ruff.format]
+quote-style = "double"              # Match Black's default (enforce double quotes)
+indent-style = "space"              # Use spaces for indentation
+skip-magic-trailing-comma = false  # Respect magic trailing comma like Black
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle error
+    "W",   # pycodestyle warning
+    "F",   # pyflakes
+    "A",   # flakes8-builtins
+    "COM", # flakes8-commas
+    "C4",  # flake8-comprehensions
+    "Q",   # flake8-quotes
+    "SIM", # flake8-simplify
+    "PTH", # flake8-use-pathlib
+    "I",   # isort
+    "N",   # pep8 naming
+    "UP",  # pyupgrade
+    "S",   # bandit
+]
+ignore = ["COM812"]  # Conflicts with formatter
+
+[tool.ruff.lint.per-file-ignores]
+# Allow assert statements in test files
+"tests/**/*.py" = ["S101"]
+"test_*.py" = ["S101"]
+"**/test_*.py" = ["S101"]
+# Ignore SQL injection warning for HTML template generation
+"visualize_planning.py" = ["S608"]
+
+[tool.ruff.lint.flake8-builtins]
+builtins-ignorelist = ["id"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["."]
+python_files = ["test_*.py", "*_test.py"]

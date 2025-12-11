@@ -1,0 +1,61 @@
+{
+  "senario": "valid_cannot_do",
+  "examples": [
+    {
+      "conversation_id": 1,
+      "dialogue": [
+        {
+          "role": "user",
+          "message": "帮我做下萃取"
+        }
+      ],
+      "description": "小分子的场景，但是还未实现"
+    },
+    {
+      "conversation_id": 2,
+      "dialogue": [
+        {
+          "role": "user",
+          "message": "Hi Labbot"
+        },
+        {
+          "role": "assistant",
+          "message": "你好，茏少，请问有什么可以帮到你"
+        },
+        {
+          "role": "user",
+          "message": "帮我做下打浆"
+        }
+      ],
+      "description": "小分子的场景，但是还未实现"
+    },
+    {
+      "conversation_id": 3,
+      "dialogue": [
+        {
+          "role": "user",
+          "message": "Hi Robot"
+        },
+        {
+          "role": "assistant",
+          "message": "你好，茏少，请问有什么可以帮到你"
+        },
+        {
+          "role": "user",
+          "message": "拿个烧杯给我"
+        }
+      ],
+      "description": "非任务级别，缺乏上下文"
+    },
+    {
+      "conversation_id": 4,
+      "dialogue": [
+        {
+          "role": "user",
+          "message": "我昨天用过的烧杯在哪里"
+        }
+      ],
+      "description": "非任务级别的问询，缺乏上下文"
+    }
+  ]
+}

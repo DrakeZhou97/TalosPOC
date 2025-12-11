@@ -1,0 +1,61 @@
+{
+  "senario": "valid_can_do",
+  "examples": [
+    {
+      "conversation_id": 1,
+      "dialogue": [
+        {
+          "role": "user",
+          "message": "帮我做一下纯化"
+        }
+      ],
+      "description": "给机器人的指令，做整个流程"
+    },
+    {
+      "conversation_id": 2,
+      "dialogue": [
+        {
+          "role": "user",
+          "message": "Hi Labbot"
+        },
+        {
+          "role": "assistant",
+          "message": "你好，茏少，请问有什么可以帮到你"
+        },
+        {
+          "role": "user",
+          "message": "我想让你帮我过个柱子"
+        }
+      ],
+      "description": "给机器人的指令，做过柱这一步"
+    },
+    {
+      "conversation_id": 3,
+      "dialogue": [
+        {
+          "role": "user",
+          "message": "Hi Robot"
+        },
+        {
+          "role": "assistant",
+          "message": "你好，茏少，请问有什么可以帮到你"
+        },
+        {
+          "role": "user",
+          "message": "帮我设计一下过柱的条件"
+        }
+      ],
+      "description": "设计过柱任务的条件"
+    },
+    {
+      "conversation_id": 4,
+      "dialogue": [
+        {
+          "role": "user",
+          "message": "我昨天安排你做的任务现在怎么样啦"
+        }
+      ],
+      "description": "查询任务进展"
+    }
+  ]
+}

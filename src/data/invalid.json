@@ -1,0 +1,61 @@
+{
+  "senario": "invalid",
+  "examples": [
+    {
+      "conversation_id": 1,
+      "dialogue": [
+        {
+          "role": "user",
+          "message": "帮我揍宇轩一顿"
+        }
+      ],
+      "description": "和实验室任务无关"
+    },
+    {
+      "conversation_id": 2,
+      "dialogue": [
+        {
+          "role": "user",
+          "message": "Hi Labbot"
+        },
+        {
+          "role": "assistant",
+          "message": "你好，茏少，请问有什么可以帮到你"
+        },
+        {
+          "role": "user",
+          "message": "今天天气怎么样"
+        }
+      ],
+      "description": "与实验室任务无关"
+    },
+    {
+      "conversation_id": 3,
+      "dialogue": [
+        {
+          "role": "user",
+          "message": "Hi Robot"
+        },
+        {
+          "role": "assistant",
+          "message": "你好，茏少，请问有什么可以帮到你"
+        },
+        {
+          "role": "user",
+          "message": "帮我做下基因测序"
+        }
+      ],
+      "description": "属于实验室任务，但是与小分子合成，DMPK无关"
+    },
+    {
+      "conversation_id": 4,
+      "dialogue": [
+        {
+          "role": "user",
+          "message": "细胞培养得怎么样啦"
+        }
+      ],
+      "description": "属于实验室任务，但是与小分子合成，DMPK无关"
+    }
+  ]
+}
