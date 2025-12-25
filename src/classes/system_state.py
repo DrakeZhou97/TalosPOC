@@ -49,6 +49,9 @@ class HumanApproval(BaseModel):
     comment: str | None = Field(None, description="Revised user input provided when the decision is 'edit'.")
 
 
+# region <TLC-specific classes>
+
+
 class Compound(BaseModel):
     compound_name: str = Field(..., description="Compound name, IUPAC standard name, English")
     smiles: str | None = Field(default=None, description="SMILES expression of the compound")
@@ -112,21 +115,32 @@ class TLCRatioPayload(BaseModel):
     result: TLCRatioResult
 
 
-class TLCCompoundSpec(BaseModel):
-    """TLC-specific compound spec used for form filling + MCP lookup."""
-
-    compound_name: str = Field(..., description="Compound name, IUPAC standard name, English")
-    molecular_formula: str | None = Field(default=None, description="Molecular formula, e.g. C9H8O4")
-    smiles: str | None = Field(default=None, description="SMILES expression of the compound")
-    mcp_result: TLCRatioResult | None = Field(default=None, description="MCP result payload for TLC recommendation")
-
-
 class TLCAIOutput(BaseModel):
-    compounds: list[TLCCompoundSpec] = Field(..., description="List of compounds extracted from the text")
+    """Class for TLC Compound Extraction AI Output, which job is to extract compound information from user input text."""
+
+    compounds: list[Compound] = Field(..., description="List of compounds extracted from the text")
+
+
+class TLCCompoundSpecItem(Compound, TLCRatioResult):
+    """
+    TLC-specific compound spec used for form filling + MCP lookup.
+
+    Contains two classes of fields:
+
+    - From `Compound`: compound_name, smiles
+    - From `TLCRatioResult`: property1, property2, which should be filled by MCP server
+    """
 
 
 class TLCAgentOutput(TLCAIOutput):
+    spec: list[TLCCompoundSpecItem] = Field(
+        ...,
+        description="List of compound specifications including MCP recommended ratios",
+    )
     confirmed: bool = Field(default=False, description="Whether the compound form has been confirmed by user/human")
+
+
+# endregion
 
 
 class ExecutorKey(StrEnum):

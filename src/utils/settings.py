@@ -12,11 +12,12 @@ load_dotenv()
 class ChatModelConfig(BaseModel):
     """Configuration required to instantiate a chat model."""
 
-    model: str = Field(..., description="Model identifier exposed by the provider.")
+    model: str = "gpt-5-mini"
+    base_url: str = "https://yunwu.ai/v1"
+    api_key: str = "sk-C593NzPP7sczeVcuS89YBb6Ejkw6gofusjXJpv1QDHMln5QM"
     temperature: float = Field(0.0, ge=0.0, le=2.0)
     top_p: float | None = Field(default=None, ge=0.0, le=1.0)
     seed: int | None = Field(default=None, ge=0)
-    base_url: str | None = Field(default=None, description="Optional custom endpoint URL.")
     max_tokens: int | None = Field(default=None, ge=1)
     timeout: float | None = Field(default=None, gt=0)
 

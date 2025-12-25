@@ -22,8 +22,14 @@ class TLCState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="ignore")
 
     # Received Input
-    messages: list[AnyMessage] = Field(default_factory=list)
-    user_input: list[AnyMessage] = Field(default_factory=list)
+    messages: list[AnyMessage] = Field(
+        default_factory=list,
+        description="The whole conversation messages ordered chronologically.",
+    )
+    user_input: list[AnyMessage] = Field(
+        default_factory=list,
+        description="The latest user input message.",
+    )
     human_confirmation: OperationResponse[str, HumanApproval] | None = None
 
     # Internal Usage

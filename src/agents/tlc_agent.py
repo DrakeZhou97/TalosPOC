@@ -9,7 +9,14 @@ from langgraph.types import interrupt
 
 from src.classes.operation import OperationInterruptPayload, OperationResponse, OperationResume
 from src.classes.PROMPT import TLC_AGENT_PROMPT
-from src.classes.system_state import TLCAgentOutput, TLCAIOutput, TLCCompoundSpec, TLCRatioPayload, TLCRatioResult
+from src.classes.system_state import (
+    Compound,
+    TLCAgentOutput,
+    TLCAIOutput,
+    TLCCompoundSpecItem,
+    TLCRatioPayload,
+    TLCRatioResult,
+)
 from src.utils.logging_config import logger
 from src.utils.models import TLC_MODEL
 from src.utils.settings import ChatModelConfig, settings
@@ -18,7 +25,6 @@ from src.utils.settings import ChatModelConfig, settings
 @tool
 def get_tlc_ratio_from_mcp(
     compound_name: str | None = None,
-    molecular_formula: str | None = None,
     smiles: str | None = None,
 ) -> dict:
     """
@@ -26,7 +32,6 @@ def get_tlc_ratio_from_mcp(
 
     Args:
         compound_name: Compound name (preferred when no structure is available).
-        molecular_formula: Molecular formula (optional).
         smiles: SMILES expression (preferred when available).
 
     Returns:
@@ -38,10 +43,10 @@ def get_tlc_ratio_from_mcp(
     logger.debug(
         "Getting TLC ratio from MCP. compound_name={} formula={} smiles={}",
         compound_name,
-        molecular_formula,
+        None,
         smiles,
     )
-    key = smiles or molecular_formula or compound_name or "unknown"
+    key = smiles or compound_name or "unknown"
     payload = TLCRatioPayload(result=TLCRatioResult(property1=f"mock_property1_for_{key}", property2="mock_property2"))
     return payload.model_dump(mode="json")
 
@@ -82,7 +87,7 @@ class TLCAgent:
 
             if missing:
                 interrupt_payload = OperationInterruptPayload(
-                    message="Need more information to proceed. Please provide missing fields (e.g., molecular_formula). You can reply in plain text.",
+                    message="Need more information to proceed. Please provide missing fields. You can reply in plain text.",
                     args={"missing_fields": missing, "current_form": spec.model_dump(mode="json")},
                 )
                 payload = interrupt(interrupt_payload.model_dump(mode="json"))
@@ -153,17 +158,17 @@ class TLCAgent:
 
     def fill_ratios(self, form: TLCAgentOutput) -> TLCAgentOutput:
         """
-        Fill `mcp_result` for each compound using MCP tool (placeholder).
+        Fill `spec` for each compound using MCP tool (placeholder).
 
         Note: should be called only after the form is confirmed.
         """
-        updated_compounds: list[TLCCompoundSpec] = []
+        spec_items: list[TLCCompoundSpecItem] = []
+
         for compound in form.compounds:
             try:
                 payload = get_tlc_ratio_from_mcp.invoke(
                     {
                         "compound_name": compound.compound_name,
-                        "molecular_formula": compound.molecular_formula,
                         "smiles": compound.smiles,
                     },
                 )
@@ -178,19 +183,35 @@ class TLCAgent:
                 except Exception as exc:
                     logger.warning("Failed to parse MCP payload for compound {}: {}", compound.compound_name, exc)
 
-            updated_compounds.append(compound.model_copy(update={"mcp_result": mcp_result or compound.mcp_result}))
+            property1 = mcp_result.property1 if mcp_result is not None else "unavailable"
+            property2 = mcp_result.property2 if mcp_result is not None else "unavailable"
+            spec_items.append(
+                TLCCompoundSpecItem(
+                    compound_name=compound.compound_name,
+                    smiles=compound.smiles,
+                    property1=property1,
+                    property2=property2,
+                )
+            )
 
-        return form.model_copy(update={"compounds": updated_compounds})
+        return form.model_copy(update={"spec": spec_items})
 
     @staticmethod
     def _coerce_spec(value: Any) -> TLCAgentOutput | None:
         if value is None:
             return None
+
+        def _normalize_form_dict(form_dict: dict[str, Any]) -> dict[str, Any]:
+            # `spec` is required by TLCAgentOutput; user/HITL payloads may omit it.
+            if "spec" not in form_dict:
+                form_dict = {**form_dict, "spec": []}
+            return form_dict
+
         # Accept either {"form": {...}} or direct form JSON
         if isinstance(value, dict) and "form" in value and isinstance(value["form"], dict):
-            return TLCAgentOutput.model_validate(value["form"])
+            return TLCAgentOutput.model_validate(_normalize_form_dict(value["form"]))
         if isinstance(value, dict):
-            return TLCAgentOutput.model_validate(value)
+            return TLCAgentOutput.model_validate(_normalize_form_dict(value))
         return None
 
     @staticmethod
@@ -201,8 +222,6 @@ class TLCAgent:
         for i, c in enumerate(spec.compounds):
             if not (c.compound_name or "").strip():
                 missing.append(f"compounds[{i}].compound_name")
-            if not (c.molecular_formula or "").strip():
-                missing.append(f"compounds[{i}].molecular_formula")
         return missing
 
     @staticmethod
@@ -232,11 +251,13 @@ class TLCAgent:
 
         """
         try:
-            current_form_json = (current_form or TLCAgentOutput(compounds=[])).model_dump(mode="json")
+            current_form_json = (current_form or TLCAgentOutput(compounds=[], spec=[], confirmed=False)).model_dump(
+                mode="json"
+            )
             prompt_msg = HumanMessage(
                 content=(
                     "Current compound form (JSON). Update / fill it based on the conversation. "
-                    "Do NOT invent missing molecular_formula; leave it null if unknown.\n\n"
+                    "Do NOT invent SMILES; leave it null if unknown.\n\n"
                     f"{current_form_json}"
                 ),
             )
@@ -261,16 +282,18 @@ class TLCAgent:
 
     @staticmethod
     def _merge_form(current_form: TLCAgentOutput | None, extracted: TLCAIOutput) -> TLCAgentOutput:
-        existing = list((current_form or TLCAgentOutput(compounds=[])).compounds)
-        by_name: dict[str, TLCCompoundSpec] = {c.compound_name.strip().lower(): c for c in existing if c.compound_name}
-        merged: list[TLCCompoundSpec] = []
+        existing_form = current_form or TLCAgentOutput(compounds=[], spec=[], confirmed=False)
+        existing = list(existing_form.compounds)
+        by_name: dict[str, Compound] = {c.compound_name.strip().lower(): c for c in existing if c.compound_name}
+        merged: list[Compound] = []
 
-        def _merge_one(old: TLCCompoundSpec | None, new: TLCCompoundSpec) -> TLCCompoundSpec:
+        preserved_spec = list(existing_form.spec)
+
+        def _merge_one(old: Compound | None, new: Compound) -> Compound:
             if old is None:
                 return new
             return old.model_copy(
                 update={
-                    "molecular_formula": old.molecular_formula or new.molecular_formula,
                     "smiles": old.smiles or new.smiles,
                 },
             )
@@ -286,4 +309,4 @@ class TLCAgent:
             if old_key and old_key not in extracted_keys:
                 merged.append(old_c)
 
-        return TLCAgentOutput(compounds=merged, confirmed=False)
+        return TLCAgentOutput(compounds=merged, spec=preserved_spec, confirmed=False)

@@ -24,7 +24,7 @@ def streaming() -> None:
     config: Any = {"configurable": {"thread_id": thread_id}}
     conversation: list[AnyMessage] = [
         HumanMessage(
-            content="我正在进行水杨酸 (Salicylic Acid) 的 乙酰化反应 制备乙酰水杨酸 (Aspirin)。需要进行中控监测 (IPC)"
+            content="我正在进行水杨酸 (Salicylic Acid) 的 乙酰化反应 制备乙酰水杨酸 (Aspirin)。需要进行中控监测 (IPC)",
         ),
     ]
 
@@ -35,7 +35,7 @@ def streaming() -> None:
     while True:
         # interrupt_payload: Any | None = None
 
-        for state in talos_agent.stream(next_input, config=config, stream_mode="updates"):
+        for state in talos_agent.stream(next_input, config=config, stream_mode="messages"):
             print(f"Updated States: {_pretty(state)}")
 
             # Catch Human In the Loop

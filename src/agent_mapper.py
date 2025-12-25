@@ -6,7 +6,7 @@ Also including other Langgraph specific function e.g., interrupt().
 
 from typing import Any
 
-from langchain_core.messages import AnyMessage, HumanMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 from langgraph.types import interrupt
 
 from src.agents.tlc_agent import TLCAgent
@@ -16,10 +16,8 @@ from src.classes.system_enum import AdmittanceState, ExecutionStatusEnum, TLCPha
 from src.classes.system_state import (
     ExecutorKey,
     HumanApproval,
-    IntentionDetectionFin,
     PlanningAgentOutput,
     PlanStep,
-    UserAdmittance,
 )
 from src.functions.admittance import WatchDogAgent
 from src.functions.human_interaction import HumanInLoop
@@ -38,7 +36,16 @@ tlc_agent = TLCAgent()
 
 
 def _ensure_messages(state: TLCState) -> list[AnyMessage]:
-    return list(state.messages or state.user_input or [])
+    """
+    Return a copy of the current conversation messages.
+
+    Prefer `state.messages`; fall back to `state.user_input` for compatibility.
+    """
+    if state.messages:
+        return list(state.messages)
+    if state.user_input:
+        return list(state.user_input)
+    return []
 
 
 def _dump_messages_for_human_review(messages: list[AnyMessage]) -> list[dict[str, Any]]:
@@ -58,6 +65,18 @@ def _apply_human_revision(messages: list[AnyMessage], revised_text: str) -> list
 
     updated.append(HumanMessage(content=revised_text))
     return updated
+
+
+def _get_plan_output(state: TLCState) -> PlanningAgentOutput:
+    plan = state.plan
+    if plan is None:
+        raise ValueError("Missing 'plan' in state")
+    return plan.output
+
+
+def _get_current_step(state: TLCState) -> tuple[int, PlanStep]:
+    cursor = int(state.plan_cursor)
+    return cursor, _get_plan_output(state).plan_steps[cursor]
 
 
 # endregion
@@ -114,7 +133,7 @@ def request_user_confirm(state: TLCState) -> dict[str, OperationResponse[str, Hu
 
 def user_admittance_node(
     state: TLCState,
-) -> dict[str, OperationResponse[list[AnyMessage], UserAdmittance] | AdmittanceState]:
+) -> dict[str, Any]:
     """If user input is within domain and capacity of this Agent, return YES, otherwise NO."""
     messages = _ensure_messages(state)
     res = watch_dog.run(user_input=messages)
@@ -125,23 +144,55 @@ def user_admittance_node(
         res.output.within_capacity,
     )
 
+    updated_messages = list(messages)
+    updated_messages.append(
+        AIMessage(
+            content="\n".join(
+                [
+                    "[watchdog] user_admittance_result",
+                    f"within_domain={res.output.within_domain} within_capacity={res.output.within_capacity}",
+                    f"feedback={res.output.feedback}",
+                ],
+            ),
+        ),
+    )
+
     return {
         "admittance": res,
         "admittance_state": AdmittanceState.YES
         if res.output.within_domain and res.output.within_capacity
         else AdmittanceState.NO,
+        "messages": updated_messages,
+        "user_input": updated_messages,
     }
 
 
-def intention_detection_node(state: TLCState) -> dict[str, OperationResponse[list[AnyMessage], IntentionDetectionFin]]:
+def intention_detection_node(state: TLCState) -> dict[str, Any]:
     """Run intention detection on user input."""
     messages = _ensure_messages(state)
     logger.info("Running intention_detection_node with {} messages", len(messages))
     res = intention_detect_agent.run(user_input=messages)
     logger.debug(f"Intention detection output: {res}")
 
+    out = res.output
+    updated_messages = list(messages)
+    updated_messages.append(
+        AIMessage(
+            content="\n".join(
+                [
+                    "[intention_detection] result",
+                    f"winner_id={out.winner_id}",
+                    f"matched_goal_type={out.matched_goal_type}",
+                    f"reason={out.reason}",
+                ],
+            ),
+        ),
+    )
+
     return {
         "intention": res,
+        "messages": updated_messages,
+        "user_input": updated_messages,
     }
 
 
@@ -152,19 +203,28 @@ def planner_node(state: TLCState) -> dict[str, Any]:
     res = planner_agent.run(user_input=messages)
     logger.debug("Planner output: {}", res)
 
-    return {"plan": res, "plan_cursor": 0}
+    plan_out = res.output
+    steps_preview = "\n".join(
+        [
+            f"- {idx + 1}. {s.title} (executor={s.executor}, requires_human_approval={s.requires_human_approval})"
+            for idx, s in enumerate(plan_out.plan_steps)
+        ],
+    )
+    updated_messages = list(messages)
+    updated_messages.append(
+        AIMessage(
+            content="\n".join(
+                [
+                    "[planner] plan_created",
+                    f"plan_hash={plan_out.plan_hash}",
+                    "steps:",
+                    steps_preview or "- (no steps)",
+                ],
+            ),
+        ),
+    )
 
-
-def _get_plan_output(state: TLCState) -> PlanningAgentOutput:
-    plan = state.plan
-    if plan is None:
-        raise ValueError("Missing 'plan' in state")
-    return plan.output
-
-
-def _get_current_step(state: TLCState) -> tuple[int, PlanStep]:
-    cursor = int(state.plan_cursor)
-    return cursor, _get_plan_output(state).plan_steps[cursor]
+    return {"plan": res, "plan_cursor": 0, "messages": updated_messages, "user_input": updated_messages}
 
 
 def dispatch_todo_node(state: TLCState) -> dict[str, Any]:
@@ -227,23 +287,6 @@ def dispatch_todo_node(state: TLCState) -> dict[str, Any]:
     return updates
 
 
-def route_next_todo(state: TLCState) -> str:
-    """Route to the next step executor based on step.executor; END when done."""
-    plan_out = _get_plan_output(state)
-    cursor = int(state.plan_cursor)
-    if cursor >= len(plan_out.plan_steps):
-        logger.info("All steps executed. cursor={} total={}", cursor, len(plan_out.plan_steps))
-        return "done"
-
-    step = plan_out.plan_steps[cursor]
-    logger.info("Routing step cursor={} id={} executor={}", cursor, step.id, step.executor)
-
-    if step.executor == ExecutorKey.TLC_AGENT:
-        return "execute_tlc"
-
-    return "execute_unsupported"
-
-
 def execute_tlc_node(state: TLCState) -> dict[str, Any]:
     """Execute TLC-related step using TLCAgent (multi-turn form collection + confirmation + placeholder MCP lookup)."""
     cursor, step = _get_current_step(state)
@@ -291,12 +334,6 @@ def execute_unsupported_node(state: TLCState) -> dict[str, Any]:
     return {"plan": state.plan}
 
 
-def advance_todo_cursor_node(state: TLCState) -> dict[str, Any]:
-    """Advance plan_cursor to the next todo."""
-    cursor = int(state.plan_cursor)
-    return {"plan_cursor": cursor + 1}
-
-
 # endregion
 
 
@@ -324,6 +361,29 @@ def route_human_confirm_intention(state: TLCState) -> str:
 
     logger.info("Human confirmation rejected or missing, revising.")
     return OperationRouting.REVISE.value
+
+
+def route_next_todo(state: TLCState) -> str:
+    """Route to the next step executor based on step.executor; END when done."""
+    plan_out = _get_plan_output(state)
+    cursor = int(state.plan_cursor)
+    if cursor >= len(plan_out.plan_steps):
+        logger.info("All steps executed. cursor={} total={}", cursor, len(plan_out.plan_steps))
+        return "done"
+
+    step = plan_out.plan_steps[cursor]
+    logger.info("Routing step cursor={} id={} executor={}", cursor, step.id, step.executor)
+
+    if step.executor == ExecutorKey.TLC_AGENT:
+        return "execute_tlc"
+
+    return "execute_unsupported"
+
+
+def advance_todo_cursor_node(state: TLCState) -> dict[str, Any]:
+    """Advance plan_cursor to the next todo."""
+    cursor = int(state.plan_cursor)
+    return {"plan_cursor": cursor + 1}
 
 
 # endregion
