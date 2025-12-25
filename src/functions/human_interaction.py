@@ -23,14 +23,14 @@ class HumanInLoop:
 
     def post_human_confirmation(
         self,
-        comment: str,
+        comment: str | None,
         reviewed: IntentionDetectionFin,
         approval: bool = False,
     ) -> OperationResponse[str, HumanApproval]:
         """Verify / Normalize user input etc."""
         # TODO: Add actual logic here
 
-        logger.info(f"Posting human confirmation. approval={approval} comment='{comment}' reviewed={reviewed}")
+        logger.info("Posting human confirmation. approval={} comment='{}' reviewed={}", approval, comment, reviewed)
 
         return OperationResponse[str, HumanApproval](
             operation_id="human_confirmation_1",

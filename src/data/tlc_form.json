@@ -1,0 +1,24 @@
+{
+    "pages": [
+        {
+            "name": "page1",
+            "elements": [
+                {
+                    "type": "multipletext",
+                    "name": "q1",
+                    "title": "Q1",
+                    "description": "请输入想要的化合物名称",
+                    "items": [
+                        {
+                            "name": "text1"
+                        },
+                        {
+                            "name": "text2"
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "headerView": "advanced"
+}

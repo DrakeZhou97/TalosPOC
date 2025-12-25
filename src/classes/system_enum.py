@@ -19,3 +19,11 @@ class ExecutionStatusEnum(str, Enum):
     COMPLETED = "completed"
     ON_HOLD = "on_hold"
     CANCELLED = "cancelled"
+
+
+class TLCPhase(str, Enum):
+    COLLECTING = "collecting"
+    AWAITING_INFO = "awaiting_info"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    CONFIRMED = "confirmed"
+    DONE = "done"

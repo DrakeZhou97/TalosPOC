@@ -8,6 +8,5 @@ from pydantic import BaseModel
 
 
 class ConfidencyGuardianAgent(BaseModel):
-    def run(self) -> None:
-        """Validate whether an AI determination can be trusted."""
-        return
+    def run() -> None:
+        pass

@@ -62,7 +62,8 @@ class Planner:
                 title="TLC IPC monitoring (extract compounds + lookup Rf)",
                 executor=ExecutorKey.TLC_AGENT,
                 args={},
-                requires_human_approval=True,
+                # TLC execution includes its own form confirmation stage, so avoid double HITL.
+                requires_human_approval=False,
                 status=ExecutionStatusEnum.NOT_STARTED,
                 output=None,
             ),

@@ -51,15 +51,82 @@ class HumanApproval(BaseModel):
 
 class Compound(BaseModel):
     compound_name: str = Field(..., description="Compound name, IUPAC standard name, English")
-    smiles: str = Field(..., description="SMILES expression of the compound")
+    smiles: str | None = Field(default=None, description="SMILES expression of the compound")
+
+    # @field_validator("compound_name", "smiles", mode="before")
+    # @classmethod
+    # def _normalize_optional_str(cls, v: str | None) -> str | None:
+    #     if v is None:
+    #         return None
+    #     if not isinstance(v, str):
+    #         raise TypeError("compound_name/SMILES must be a string or None")
+    #     stripped = v.strip()
+    #     return stripped or None
+
+    # @field_validator("smiles")
+    # @classmethod
+    # def _validate_smiles(cls, v: str | None) -> str | None:
+    #     if v is None:
+    #         return None
+
+    #     mol = Chem.MolFromSmiles(v)
+    #     if mol is None:
+    #         raise ValueError("Invalid smiles: RDKit failed to parse")
+    #     return v
+
+    # @field_validator("compound_name")
+    # @classmethod
+    # def _validate_compound_name_as_chem(cls, v: str | None) -> str | None:
+    #     """
+    #     Validate `compound_name` as a chemical identifier when provided.
+
+    #     Note: RDKit does not natively resolve common names (e.g. "acetone") to structures.
+    #     This validator treats `compound_name` as a machine-readable chemical identifier
+    #     (smiles or InChI).
+    #     """
+    #     if v is None:
+    #         return None
+
+    #     mol = Chem.MolFromInchi(v) if v.startswith("InChI=") else Chem.MolFromSmiles(v)
+    #     if mol is None:
+    #         raise ValueError("Invalid compound_name: expected a valid SMILES or InChI")
+    #     return v
+
+    # @model_validator(mode="after")
+    # def _validate_presence(self) -> "Compound":
+    #     if self.compound_name is None and self.smiles is None:
+    #         raise ValueError("compound_name and SMILES cannot both be None")
+    #     return self
+
+
+class TLCRatioResult(BaseModel):
+    """MCP server output payload (inner object)."""
+
+    property1: str
+    property2: str
+
+
+class TLCRatioPayload(BaseModel):
+    """MCP server output payload (outer envelope)."""
+
+    result: TLCRatioResult
+
+
+class TLCCompoundSpec(BaseModel):
+    """TLC-specific compound spec used for form filling + MCP lookup."""
+
+    compound_name: str = Field(..., description="Compound name, IUPAC standard name, English")
+    molecular_formula: str | None = Field(default=None, description="Molecular formula, e.g. C9H8O4")
+    smiles: str | None = Field(default=None, description="SMILES expression of the compound")
+    mcp_result: TLCRatioResult | None = Field(default=None, description="MCP result payload for TLC recommendation")
 
 
 class TLCAIOutput(BaseModel):
-    compounds: list[Compound] = Field(..., description="List of compounds extracted from the text")
+    compounds: list[TLCCompoundSpec] = Field(..., description="List of compounds extracted from the text")
 
 
 class TLCAgentOutput(TLCAIOutput):
-    pass
+    confirmed: bool = Field(default=False, description="Whether the compound form has been confirmed by user/human")
 
 
 class ExecutorKey(StrEnum):

@@ -11,8 +11,8 @@ from langgraph.types import interrupt
 
 from src.agents.tlc_agent import TLCAgent
 from src.classes.agent_flow_state import TLCState
-from src.classes.operation import OperationResponse, OperationResume, OperationRouting
-from src.classes.system_enum import AdmittanceState, ExecutionStatusEnum
+from src.classes.operation import OperationInterruptPayload, OperationResponse, OperationResume, OperationRouting
+from src.classes.system_enum import AdmittanceState, ExecutionStatusEnum, TLCPhase
 from src.classes.system_state import (
     ExecutorKey,
     HumanApproval,
@@ -77,16 +77,17 @@ def request_user_confirm(state: TLCState) -> dict[str, OperationResponse[str, Hu
     print("intention", intention)
 
     reviewed = intention.output
-    logger.info("Intention detection result (reviewed): {}", reviewed)
 
     messages = _ensure_messages(state)
 
-    interrupt_payload = {
-        "question": "Do you approve this intention? If not, edit the user input in 'comment'.",
-        "intention": reviewed.model_dump(mode="json"),
-        "current_user_input": _dump_messages_for_human_review(messages),
-    }
-    payload = interrupt(interrupt_payload)
+    interrupt_payload = OperationInterruptPayload(
+        message=f"You intention is to {reviewed.winner_id}",
+        args={
+            "intention": reviewed.model_dump(mode="json"),
+            "current_user_input": _dump_messages_for_human_review(messages),
+        },
+    )
+    payload = interrupt(interrupt_payload.model_dump(mode="json"))
     resume = OperationResume(**payload)
 
     if resume.approval:
@@ -178,7 +179,7 @@ def dispatch_todo_node(state: TLCState) -> dict[str, Any]:
             continue
         break
 
-    updates: dict[str, Any] = {}
+    updates: dict[str, Any] = {}  # contains only what's changed
     if cursor != int(state.plan_cursor):
         updates["plan_cursor"] = cursor
 
@@ -187,18 +188,20 @@ def dispatch_todo_node(state: TLCState) -> dict[str, Any]:
 
     step = plan_out.plan_steps[cursor]
     if step.requires_human_approval:
-        interrupt_payload = {
-            "question": "Approve executing this step? If not, reject; optionally edit input in 'comment'.",
-            "step": {
-                "id": step.id,
-                "title": step.title,
-                "executor": str(step.executor),
-                "args": step.args,
-                "requires_human_approval": step.requires_human_approval,
-                "status": step.status.value,
+        interrupt_payload = OperationInterruptPayload(
+            message="Approve executing this step? If not, reject; optionally edit input in 'comment'.",
+            args={
+                "step": {
+                    "id": step.id,
+                    "title": step.title,
+                    "executor": str(step.executor),
+                    "args": step.args,
+                    "requires_human_approval": step.requires_human_approval,
+                    "status": step.status.value,
+                },
             },
-        }
-        payload = interrupt(interrupt_payload)
+        )
+        payload = interrupt(interrupt_payload.model_dump(mode="json"))
         resume = OperationResume(**payload)
 
         if resume.approval:
@@ -218,6 +221,7 @@ def dispatch_todo_node(state: TLCState) -> dict[str, Any]:
             updates["plan"] = state.plan
             updates["plan_cursor"] = cursor + 1
 
+    # copy exist
     if "plan" not in updates:
         updates["plan"] = state.plan
     return updates
@@ -241,7 +245,7 @@ def route_next_todo(state: TLCState) -> str:
 
 
 def execute_tlc_node(state: TLCState) -> dict[str, Any]:
-    """Execute TLC-related step using TLCAgent (compound extraction + placeholder MCP lookup)."""
+    """Execute TLC-related step using TLCAgent (multi-turn form collection + confirmation + placeholder MCP lookup)."""
     cursor, step = _get_current_step(state)
 
     step.status = ExecutionStatusEnum.IN_PROGRESS
@@ -252,18 +256,26 @@ def execute_tlc_node(state: TLCState) -> dict[str, Any]:
     input_text = str(step.args.get("input_text", "")).strip()
     if input_text:
         messages = _apply_human_revision(messages, input_text)
-    res = tlc_agent.run(user_input=messages)
+
+    spec_op = tlc_agent.run(user_input=messages, current_form=state.tlc_spec)
+    approved_spec = spec_op.output
 
     step.output = {
         "agent": "tlc_agent",
         "executor": str(step.executor),
         "args": step.args,
-        "result": res.output.model_dump(mode="json"),
+        "spec": approved_spec.model_dump(mode="json"),
     }
     step.status = ExecutionStatusEnum.COMPLETED
 
     logger.info("Executed TLC step cursor={} id={} executor={}", cursor, step.id, step.executor)
-    return {"plan": state.plan}
+    return {
+        "plan": state.plan,
+        "tlc_spec": approved_spec,
+        "tlc_phase": TLCPhase.DONE,
+        "messages": spec_op.input,
+        "user_input": spec_op.input,
+    }
 
 
 def execute_unsupported_node(state: TLCState) -> dict[str, Any]:

@@ -1,34 +1,49 @@
 from datetime import datetime
+from typing import Any
 
 from langchain.agents import create_agent
 from langchain.agents.structured_output import StructuredOutputValidationError, ToolStrategy
 from langchain.tools import tool
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import AnyMessage, HumanMessage
+from langgraph.types import interrupt
 
-from src.classes.operation import OperationResponse
+from src.classes.operation import OperationInterruptPayload, OperationResponse, OperationResume
 from src.classes.PROMPT import TLC_AGENT_PROMPT
-from src.classes.system_state import Compound, TLCAgentOutput, TLCAIOutput
+from src.classes.system_state import TLCAgentOutput, TLCAIOutput, TLCCompoundSpec, TLCRatioPayload, TLCRatioResult
 from src.utils.logging_config import logger
 from src.utils.models import TLC_MODEL
 from src.utils.settings import ChatModelConfig, settings
 
 
 @tool
-def get_tlc_ratio_from_mcp(smiles: str) -> str:
+def get_tlc_ratio_from_mcp(
+    compound_name: str | None = None,
+    molecular_formula: str | None = None,
+    smiles: str | None = None,
+) -> dict:
     """
-    Get TLC ratio from MCP server for a given compound SMILES.
+    Get TLC ratio from MCP server for a given compound.
 
     Args:
-        smiles: SMILES expression of the compound.
+        compound_name: Compound name (preferred when no structure is available).
+        molecular_formula: Molecular formula (optional).
+        smiles: SMILES expression (preferred when available).
 
     Returns:
-        TLC ratio information as a string.
+        MCP payload: {"result": {"property1": "...", "property2": "..."}}.
 
     """
     # TODO: Implement actual MCP server call when resources are available
     # This is a placeholder that can be extended with actual MCP integration
-    logger.debug("Getting TLC ratio for SMILES: {}", smiles)
-    return f"TLC ratio for {smiles} (MCP integration pending)"
+    logger.debug(
+        "Getting TLC ratio from MCP. compound_name={} formula={} smiles={}",
+        compound_name,
+        molecular_formula,
+        smiles,
+    )
+    key = smiles or molecular_formula or compound_name or "unknown"
+    payload = TLCRatioPayload(result=TLCRatioResult(property1=f"mock_property1_for_{key}", property2="mock_property2"))
+    return payload.model_dump(mode="json")
 
 
 class TLCAgent:
@@ -42,58 +57,172 @@ class TLCAgent:
             tools=[get_tlc_ratio_from_mcp],
         )
 
-    def run(self, user_input: list[AnyMessage]) -> OperationResponse[list[AnyMessage], TLCAgentOutput]:
+    def run(
+        self,
+        user_input: list[AnyMessage],
+        current_form: TLCAgentOutput | None = None,
+    ) -> OperationResponse[list[AnyMessage], TLCAgentOutput]:
         """
-        Run the TLCAgent to extract compounds and get TLC ratio.
+        Run the TLC flow end-to-end (multi-turn).
+
+        - Extract/merge compound form from conversation
+        - Ask for missing fields (HITL via interrupt)
+        - Ask for final confirmation (HITL via interrupt)
+        - Fill MCP ratios once confirmed
+        """
+        start_time = datetime.now()
+
+        messages = list(user_input)
+        current_spec = current_form
+
+        while True:
+            spec_op = self.update_form(user_input=messages, current_form=current_spec)
+            spec = spec_op.output
+            missing = self._missing_fields(spec)
+
+            if missing:
+                interrupt_payload = OperationInterruptPayload(
+                    message="Need more information to proceed. Please provide missing fields (e.g., molecular_formula). You can reply in plain text.",
+                    args={"missing_fields": missing, "current_form": spec.model_dump(mode="json")},
+                )
+                payload = interrupt(interrupt_payload.model_dump(mode="json"))
+                resume = OperationResume(**payload)
+
+                edited_spec = self._coerce_spec(resume.data)
+                current_spec = edited_spec if edited_spec is not None else spec
+                messages = self._append_user_text(messages, resume.comment)
+                continue
+
+            interrupt_payload = OperationInterruptPayload(
+                message="Please confirm the TLC compound form. If you want to edit, reject and provide edits in comment, or provide edited form JSON in data.",
+                args={"current_form": spec.model_dump(mode="json")},
+            )
+            payload = interrupt(interrupt_payload.model_dump(mode="json"))
+            resume = OperationResume(**payload)
+
+            if resume.approval:
+                approved_spec = self._coerce_spec(resume.data) or spec
+                approved_spec = approved_spec.model_copy(update={"confirmed": True})
+                approved_spec = self.fill_ratios(approved_spec)
+
+                end_time = datetime.now()
+                return OperationResponse[list[AnyMessage], TLCAgentOutput](
+                    operation_id="tlc_agent_run_001",
+                    input=messages,
+                    output=approved_spec,
+                    start_time=start_time.isoformat(timespec="microseconds"),
+                    end_time=end_time.isoformat(timespec="microseconds"),
+                )
+
+            edited_spec = self._coerce_spec(resume.data)
+            current_spec = edited_spec if edited_spec is not None else spec
+            messages = self._append_user_text(messages, resume.comment)
+
+    def update_form(
+        self,
+        user_input: list[AnyMessage],
+        current_form: TLCAgentOutput | None = None,
+    ) -> OperationResponse[list[AnyMessage], TLCAgentOutput]:
+        """
+        Update (merge) a TLC compound form from conversation messages.
 
         Args:
             user_input (list[AnyMessage]): The user input messages ordered chronologically.
+            current_form (TLCAgentOutput | None): Previously collected form.
 
         Returns:
-            OperationResponse[list[AnyMessage], TLCAgentOutput]: The operation response containing
-                the extracted compounds and TLC ratio information.
+            OperationResponse[list[AnyMessage], TLCAgentOutput]: Updated form (not confirmed).
 
         """
         start_time = datetime.now()
 
-        logger.info("TLCAgent.run triggered with {} messages", len(user_input))
+        logger.info("TLCAgent.update_form triggered with {} messages", len(user_input))
 
-        # 1. Extract 1...n compounds from the text or if none extracted return a feedback message ask user to provide.
-        ai_output = self._extract_compounds(input_msg=user_input)
+        ai_output = self._extract_compounds(input_msg=user_input, current_form=current_form)
 
-        # 2. Call MCP Server to get the ratio
-        if not ai_output.compounds:
-            logger.warning("No compounds extracted from user input")
-            # Return feedback message asking user to provide compounds
-            end_time = datetime.now()
-            return OperationResponse[list[AnyMessage], TLCAgentOutput](
-                operation_id="tlc_agent_001",
-                input=user_input,
-                output=TLCAgentOutput(compounds=[]),
-                start_time=start_time.isoformat(timespec="microseconds"),
-                end_time=end_time.isoformat(timespec="microseconds"),
-            )
-
-        # Get TLC ratio from MCP server for each compound
-        compounds_with_ratio = self._get_tlc_ratios(ai_output.compounds)
-
-        # 3. Return the result
+        merged = self._merge_form(current_form=current_form, extracted=ai_output)
         end_time = datetime.now()
 
         return OperationResponse[list[AnyMessage], TLCAgentOutput](
             operation_id="tlc_agent_001",
             input=user_input,
-            output=TLCAgentOutput(compounds=compounds_with_ratio),
+            output=merged,
             start_time=start_time.isoformat(timespec="microseconds"),
             end_time=end_time.isoformat(timespec="microseconds"),
         )
 
-    def _extract_compounds(self, input_msg: list[AnyMessage]) -> TLCAIOutput:
+    def fill_ratios(self, form: TLCAgentOutput) -> TLCAgentOutput:
+        """
+        Fill `mcp_result` for each compound using MCP tool (placeholder).
+
+        Note: should be called only after the form is confirmed.
+        """
+        updated_compounds: list[TLCCompoundSpec] = []
+        for compound in form.compounds:
+            try:
+                payload = get_tlc_ratio_from_mcp.invoke(
+                    {
+                        "compound_name": compound.compound_name,
+                        "molecular_formula": compound.molecular_formula,
+                        "smiles": compound.smiles,
+                    },
+                )
+            except Exception as exc:
+                logger.warning("Failed to get TLC ratio for compound {}: {}", compound.compound_name, exc)
+                payload = None
+
+            mcp_result: TLCRatioResult | None = None
+            if isinstance(payload, dict):
+                try:
+                    mcp_result = TLCRatioPayload.model_validate(payload).result
+                except Exception as exc:
+                    logger.warning("Failed to parse MCP payload for compound {}: {}", compound.compound_name, exc)
+
+            updated_compounds.append(compound.model_copy(update={"mcp_result": mcp_result or compound.mcp_result}))
+
+        return form.model_copy(update={"compounds": updated_compounds})
+
+    @staticmethod
+    def _coerce_spec(value: Any) -> TLCAgentOutput | None:
+        if value is None:
+            return None
+        # Accept either {"form": {...}} or direct form JSON
+        if isinstance(value, dict) and "form" in value and isinstance(value["form"], dict):
+            return TLCAgentOutput.model_validate(value["form"])
+        if isinstance(value, dict):
+            return TLCAgentOutput.model_validate(value)
+        return None
+
+    @staticmethod
+    def _missing_fields(spec: TLCAgentOutput) -> list[str]:
+        if not spec.compounds:
+            return ["compounds"]
+        missing: list[str] = []
+        for i, c in enumerate(spec.compounds):
+            if not (c.compound_name or "").strip():
+                missing.append(f"compounds[{i}].compound_name")
+            if not (c.molecular_formula or "").strip():
+                missing.append(f"compounds[{i}].molecular_formula")
+        return missing
+
+    @staticmethod
+    def _append_user_text(messages: list[AnyMessage], text: str | None) -> list[AnyMessage]:
+        edited_text = (text or "").strip()
+        if not edited_text:
+            return list(messages)
+        return [*messages, HumanMessage(content=edited_text)]
+
+    def _extract_compounds(
+        self,
+        input_msg: list[AnyMessage],
+        current_form: TLCAgentOutput | None,
+    ) -> TLCAIOutput:
         """
         Extract compounds from user input text.
 
         Args:
             input_msg (list[AnyMessage]): The user input messages.
+            current_form (TLCAgentOutput | None): Previously collected form, used for merge guidance.
 
         Returns:
             TLCAIOutput: The extracted compounds.
@@ -103,7 +232,15 @@ class TLCAgent:
 
         """
         try:
-            result = self.tlc_agent.invoke(input={"messages": input_msg})  # type: ignore
+            current_form_json = (current_form or TLCAgentOutput(compounds=[])).model_dump(mode="json")
+            prompt_msg = HumanMessage(
+                content=(
+                    "Current compound form (JSON). Update / fill it based on the conversation. "
+                    "Do NOT invent missing molecular_formula; leave it null if unknown.\n\n"
+                    f"{current_form_json}"
+                ),
+            )
+            result = self.tlc_agent.invoke(input={"messages": [*input_msg, prompt_msg]})  # type: ignore
             ai_output = result["structured_response"]
 
             if not isinstance(ai_output, TLCAIOutput):
@@ -122,33 +259,31 @@ class TLCAgent:
         else:
             return ai_output
 
-    def _get_tlc_ratios(self, compounds: list[Compound]) -> list[Compound]:
-        """
-        Get TLC ratio from MCP server for each compound.
+    @staticmethod
+    def _merge_form(current_form: TLCAgentOutput | None, extracted: TLCAIOutput) -> TLCAgentOutput:
+        existing = list((current_form or TLCAgentOutput(compounds=[])).compounds)
+        by_name: dict[str, TLCCompoundSpec] = {c.compound_name.strip().lower(): c for c in existing if c.compound_name}
+        merged: list[TLCCompoundSpec] = []
 
-        Args:
-            compounds (list[Compound]): List of compounds to get ratios for.
+        def _merge_one(old: TLCCompoundSpec | None, new: TLCCompoundSpec) -> TLCCompoundSpec:
+            if old is None:
+                return new
+            return old.model_copy(
+                update={
+                    "molecular_formula": old.molecular_formula or new.molecular_formula,
+                    "smiles": old.smiles or new.smiles,
+                },
+            )
 
-        Returns:
-            list[Compound]: List of compounds with ratio information.
+        for new_c in extracted.compounds:
+            key = (new_c.compound_name or "").strip().lower()
+            merged.append(_merge_one(by_name.get(key), new_c))
 
-        """
-        logger.info("Getting TLC ratios for {} compounds via MCP server", len(compounds))
+        # Keep any existing compounds not present in extracted output
+        extracted_keys = {(c.compound_name or "").strip().lower() for c in extracted.compounds}
+        for old_c in existing:
+            old_key = (old_c.compound_name or "").strip().lower()
+            if old_key and old_key not in extracted_keys:
+                merged.append(old_c)
 
-        # Try to fetch TLC ratio from MCP server for each compound
-        for compound in compounds:
-            try:
-                # Use the tool to get TLC ratio from MCP server
-                ratio_info = get_tlc_ratio_from_mcp.invoke({"smiles": compound.smiles})
-                logger.debug(
-                    "Got TLC ratio for compound {} (SMILES: {}): {}",
-                    compound.compound_name,
-                    compound.smiles,
-                    ratio_info,
-                )
-            except Exception as e:
-                logger.warning("Failed to get TLC ratio for compound {}: {}", compound.compound_name, e)
-
-        # For now, return compounds as-is until MCP server is fully configured
-        # In the future, we might want to extend Compound model to include ratio information
-        return compounds
+        return TLCAgentOutput(compounds=merged, confirmed=False)

@@ -2,8 +2,14 @@ from langchain_core.messages import AnyMessage
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.classes.operation import OperationResponse
-from src.classes.system_enum import AdmittanceState
-from src.classes.system_state import HumanApproval, IntentionDetectionFin, PlanningAgentOutput, UserAdmittance
+from src.classes.system_enum import AdmittanceState, TLCPhase
+from src.classes.system_state import (
+    HumanApproval,
+    IntentionDetectionFin,
+    PlanningAgentOutput,
+    TLCAgentOutput,
+    UserAdmittance,
+)
 
 
 class TLCState(BaseModel):
@@ -34,3 +40,7 @@ class TLCState(BaseModel):
 
     # Planner Execution
     plan_cursor: int = 0
+
+    # TLC Execution (multi-turn)
+    tlc_phase: TLCPhase = TLCPhase.COLLECTING
+    tlc_spec: TLCAgentOutput | None = None

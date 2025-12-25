@@ -17,7 +17,6 @@ ignore = [
     "E501",   # Line too long
     "EXE002", # Use explicit exception handling
     "ANN401", # No Any type
-    "COM812",
     "PGH003", # Error ignore
 
     # About TODO

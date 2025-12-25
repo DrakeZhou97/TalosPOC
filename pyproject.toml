@@ -33,7 +33,6 @@ dev = [
     "pandas>=2.3.3",
     "pandoc>=2.4",
     "pytest>=8.4.1",
-    "mypy>=1.11.0",
     "pyzmq>=27.0.1",
     "ruff>=0.12.8",
     "scikit-learn>=1.8.0",

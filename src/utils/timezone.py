@@ -11,15 +11,14 @@ load_dotenv()
 
 
 def get_app_timezone() -> ZoneInfo:
-    """
-    Get the application timezone from environment variable.
-
+    """Get the application timezone from environment variable.
+    
     Returns:
         ZoneInfo: The timezone object for the application.
-
+        
     Raises:
         ValueError: If the timezone is invalid.
-
+        
     """
     tz_name = os.getenv("TZ", "UTC")
     try:
@@ -29,12 +28,11 @@ def get_app_timezone() -> ZoneInfo:
 
 
 def now() -> datetime:
-    """
-    Get the current datetime in the application timezone.
-
+    """Get the current datetime in the application timezone.
+    
     Returns:
         datetime: Current datetime with application timezone.
-
+        
     """
     return datetime.now(get_app_timezone())
 
