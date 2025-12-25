@@ -8,6 +8,8 @@ authors = [
     { name = "Drake Zhou", email = "zhouyuxuan@c12.ai" }
 ]
 dependencies = [
+    "ag-ui-langgraph>=0.0.22",
+    "copilotkit>=0.1.74",
     "httpx[socks]>=0.28.1",
     "langchain-mcp-adapters>=0.2.1",
     "langchain[openai]>=1.0.8",
