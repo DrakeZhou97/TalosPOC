@@ -1,11 +1,12 @@
 [project]
-name = "BIG-POC"
+name = "BIC-POC"
 version = "0.1.0"
 description = "Lab Assistant Proof of Concept"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
-    { name = "Drake Zhou", email = "zhouyuxuan@c12.ai" }
+    { name = "Drake Zhou", email = "zhouyuxuan@c12.ai" },
+    { name = "Shion Zhou", email = "zhouwenxiang@c12.ai"}
 ]
 dependencies = [
     "ag-ui-langgraph>=0.0.22",
@@ -73,17 +74,6 @@ allowedUntypedLibraries = [
 
 typeCheckingMode = "standard"
 
-[tool.black]
-line-length = 120                   # 預設值是 88
-skip-string-normalization = false   # 強制把單引號變成雙引號
-exclude = '''
-/(
-    \.git
-  | \.venv
-  | alembic
-)/
-'''
-
 [tool.ruff]
 line-length = 120
 exclude = [
@@ -116,10 +106,12 @@ select = [
 ignore = ["COM812"]  # Conflicts with formatter
 
 [tool.ruff.lint.per-file-ignores]
+
 # Allow assert statements in test files
-"tests/**/*.py" = ["S101"]
+"src/tests/**/*.py" = ["S101"]
 "test_*.py" = ["S101"]
 "**/test_*.py" = ["S101"]
+
 # Ignore SQL injection warning for HTML template generation
 "visualize_planning.py" = ["S608"]
 
@@ -128,5 +120,5 @@ builtins-ignorelist = ["id"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["."]
+testpaths = ["src/tests"]
 python_files = ["test_*.py", "*_test.py"]

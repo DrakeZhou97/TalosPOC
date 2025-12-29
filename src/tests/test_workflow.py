@@ -8,7 +8,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Interrupt
 
-from src import agent_mapper
+from src import node_mapper
 from src.classes.agent_flow_state import TLCState
 from src.classes.operation import OperationResponse, OperationResume
 from src.classes.system_enum import ExecutionStatusEnum, GoalTypeEnum, TLCPhase
@@ -84,7 +84,7 @@ def test_bottom_line_handler_flow(monkeypatch: pytest.MonkeyPatch) -> None:
         )
         return _op_response(operation_id="watchdog_test", input_value=user_input, output_value=out)
 
-    monkeypatch.setattr(agent_mapper.watch_dog, "run", _watchdog_run)
+    monkeypatch.setattr(node_mapper.watch_dog, "run", _watchdog_run)
 
     agent = _build_agent()
     msgs: list[AnyMessage] = [HumanMessage(content="what's the weather?")]
@@ -117,9 +117,9 @@ def test_consulting_route(monkeypatch: pytest.MonkeyPatch) -> None:
         )
         return _op_response(operation_id="intention_test", input_value=user_input, output_value=out)
 
-    monkeypatch.setattr(agent_mapper.watch_dog, "run", _watchdog_run)
-    monkeypatch.setattr(agent_mapper.intention_detect_agent, "run", _intention_run)
-    monkeypatch.setattr(agent_mapper, "request_user_confirm", _auto_confirm_intention)
+    monkeypatch.setattr(node_mapper.watch_dog, "run", _watchdog_run)
+    monkeypatch.setattr(node_mapper.intention_detect_agent, "run", _intention_run)
+    monkeypatch.setattr(node_mapper, "request_user_confirm", _auto_confirm_intention)
 
     agent = _build_agent()
     msgs: list[AnyMessage] = [HumanMessage(content="帮我推荐一个 TLC 条件")]
@@ -155,7 +155,7 @@ def test_execution_tlc_subgraph_flow(monkeypatch: pytest.MonkeyPatch) -> None:
         step = PlanStep(
             id="s1",
             title="TLC step",
-            executor=agent_mapper.ExecutorKey.TLC_AGENT,
+            executor=node_mapper.ExecutorKey.TLC_AGENT,
             args={},
             requires_human_approval=False,
             status=ExecutionStatusEnum.NOT_STARTED,
@@ -170,12 +170,12 @@ def test_execution_tlc_subgraph_flow(monkeypatch: pytest.MonkeyPatch) -> None:
         confirmed=True,
     )
 
-    monkeypatch.setattr(agent_mapper.watch_dog, "run", _watchdog_run)
-    monkeypatch.setattr(agent_mapper.intention_detect_agent, "run", _intention_run)
-    monkeypatch.setattr(agent_mapper.planner_agent, "run", _planner_run)
-    monkeypatch.setattr(agent_mapper, "request_user_confirm", _auto_confirm_intention)
-    monkeypatch.setattr(agent_mapper, "plan_review_node", _auto_approve_plan)
-    monkeypatch.setattr(agent_mapper.tlc_agent, "subgraph", _stub_tlc_subgraph(tlc_spec=tlc_spec))
+    monkeypatch.setattr(node_mapper.watch_dog, "run", _watchdog_run)
+    monkeypatch.setattr(node_mapper.intention_detect_agent, "run", _intention_run)
+    monkeypatch.setattr(node_mapper.planner_agent, "run", _planner_run)
+    monkeypatch.setattr(node_mapper, "request_user_confirm", _auto_confirm_intention)
+    monkeypatch.setattr(node_mapper, "plan_review_node", _auto_approve_plan)
+    monkeypatch.setattr(node_mapper.tlc_agent, "subgraph", _stub_tlc_subgraph(tlc_spec=tlc_spec))
 
     agent = _build_agent()
     msgs: list[AnyMessage] = [HumanMessage(content="我要做 TLC 点板并生成条件")]
@@ -201,7 +201,7 @@ def test_individual_node_execution_user_admittance(monkeypatch: pytest.MonkeyPat
         )
         return _op_response(operation_id="watchdog_test", input_value=user_input, output_value=out)
 
-    monkeypatch.setattr(agent_mapper.watch_dog, "run", _watchdog_run)
+    monkeypatch.setattr(node_mapper.watch_dog, "run", _watchdog_run)
     agent = _build_agent()
 
     msgs: list[AnyMessage] = [HumanMessage(content="帮我做个 TLC 点板分析")]
@@ -242,7 +242,7 @@ def test_streaming_hitl_resume_two_interrupts(monkeypatch: pytest.MonkeyPatch) -
         step = PlanStep(
             id="s1",
             title="TLC step",
-            executor=agent_mapper.ExecutorKey.TLC_AGENT,
+            executor=node_mapper.ExecutorKey.TLC_AGENT,
             args={},
             requires_human_approval=False,  # avoid extra HITL in dispatch_todo
             status=ExecutionStatusEnum.NOT_STARTED,
@@ -259,10 +259,10 @@ def test_streaming_hitl_resume_two_interrupts(monkeypatch: pytest.MonkeyPatch) -
 
     # Keep real interrupting nodes: request_user_confirm + plan_review_node.
     # Stub all LLM calls + TLC subgraph to avoid network/tooling.
-    monkeypatch.setattr(agent_mapper.watch_dog, "run", _watchdog_run)
-    monkeypatch.setattr(agent_mapper.intention_detect_agent, "run", _intention_run)
-    monkeypatch.setattr(agent_mapper.planner_agent, "run", _planner_run)
-    monkeypatch.setattr(agent_mapper.tlc_agent, "subgraph", _stub_tlc_subgraph(tlc_spec=tlc_spec))
+    monkeypatch.setattr(node_mapper.watch_dog, "run", _watchdog_run)
+    monkeypatch.setattr(node_mapper.intention_detect_agent, "run", _intention_run)
+    monkeypatch.setattr(node_mapper.planner_agent, "run", _planner_run)
+    monkeypatch.setattr(node_mapper.tlc_agent, "subgraph", _stub_tlc_subgraph(tlc_spec=tlc_spec))
 
     agent = _build_agent()
     msgs: list[AnyMessage] = [HumanMessage(content="我要做 TLC 点板并生成条件")]
