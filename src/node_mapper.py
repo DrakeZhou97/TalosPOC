@@ -1,17 +1,12 @@
-"""
-# Wrap functions in Agent, turn into Langgraph nodes.
-
-Also including other Langgraph specific function e.g., interrupt().
-"""
+"""Wrap functions in Agent, turn into LangGraph nodes."""
 
 from typing import Any
 
-from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
-from langgraph.types import interrupt
+from langchain_core.messages import AIMessage
 
 from src.agents.tlc_agent import TLCAgent
 from src.classes.agent_flow_state import TLCState
-from src.classes.operation import OperationInterruptPayload, OperationResponse, OperationResume, OperationRouting
+from src.classes.operation import OperationResponse, OperationRouting
 from src.classes.system_enum import AdmittanceState, ExecutionStatusEnum, TLCPhase
 from src.classes.system_state import (
     ExecutorKey,
@@ -24,6 +19,7 @@ from src.functions.human_interaction import HumanInLoop
 from src.functions.intention_detection import IntentionDetectionAgent
 from src.functions.planner import Planner
 from src.utils.logging_config import logger
+from src.utils.messages import apply_human_revision, ensure_messages
 
 watch_dog = WatchDogAgent()
 human_interact_agent = HumanInLoop()
@@ -35,36 +31,8 @@ tlc_agent = TLCAgent()
 # region <utils>
 
 
-def _ensure_messages(state: TLCState) -> list[AnyMessage]:
-    """
-    Return a copy of the current conversation messages.
-
-    Prefer `state.messages`; fall back to `state.user_input` for compatibility.
-    """
-    if state.messages:
-        return list(state.messages)
-    if state.user_input:
-        return list(state.user_input)
-    return []
-
-
-def _dump_messages_for_human_review(messages: list[AnyMessage]) -> list[dict[str, Any]]:
-    return [{"type": m.__class__.__name__, "content": getattr(m, "content", None)} for m in messages]
-
-
-def _apply_human_revision(messages: list[AnyMessage], revised_text: str) -> list[AnyMessage]:
-    revised_text = revised_text.strip()
-    if not revised_text:
-        return list(messages)
-
-    updated = list(messages)
-    for idx in range(len(updated) - 1, -1, -1):
-        if isinstance(updated[idx], HumanMessage):
-            updated[idx] = HumanMessage(content=revised_text)
-            return updated
-
-    updated.append(HumanMessage(content=revised_text))
-    return updated
+_ensure_messages = ensure_messages
+_apply_human_revision = apply_human_revision
 
 
 def _get_plan_output(state: TLCState) -> PlanningAgentOutput:
@@ -93,42 +61,9 @@ def request_user_confirm(state: TLCState) -> dict[str, OperationResponse[str, Hu
     if intention is None:
         raise ValueError("Missing 'intention' in state")
 
-    print("intention", intention)
-
     reviewed = intention.output
-
     messages = _ensure_messages(state)
-
-    interrupt_payload = OperationInterruptPayload(
-        message=f"You intention is to {reviewed.winner_id}",
-        args={
-            "intention": reviewed.model_dump(mode="json"),
-            "current_user_input": _dump_messages_for_human_review(messages),
-        },
-    )
-    payload = interrupt(interrupt_payload.model_dump(mode="json"))
-    resume = OperationResume(**payload)
-
-    if resume.approval:
-        logger.info("User approved via interrupt. payload={}", payload)
-    else:
-        logger.warning("User rejected via interrupt. payload={}", payload)
-
-    confirmation = human_interact_agent.post_human_confirmation(
-        reviewed=reviewed,
-        approval=resume.approval,
-        comment=resume.comment,
-    )
-
-    updates: dict[str, Any] = {"human_confirmation": confirmation}
-
-    edited_text = (resume.comment or "").strip()
-    if not resume.approval and edited_text:
-        revised_messages = _apply_human_revision(messages, edited_text)
-        updates["messages"] = revised_messages
-        updates["user_input"] = revised_messages
-
-    return updates
+    return human_interact_agent.confirm_intention(reviewed=reviewed, messages=messages)
 
 
 def user_admittance_node(
@@ -165,6 +100,29 @@ def user_admittance_node(
         "messages": updated_messages,
         "user_input": updated_messages,
     }
+
+
+def bottom_line_handler_node(state: TLCState) -> dict[str, Any]:
+    """
+    Bottom line handler (fallback) for out-of-domain / out-of-capacity requests.
+
+    This node does not participate in the main business flow. It only provides user-facing feedback and exits.
+    """
+    messages = _ensure_messages(state)
+    feedback = ""
+    if state.admittance is not None:
+        feedback = str(state.admittance.output.feedback or "").strip()
+
+    if not feedback:
+        feedback = "当前请求超出系统领域/能力范围, 无法执行。请提供与小分子合成或 DMPK 实验相关的需求。"
+
+    updated_messages = list(messages)
+    updated_messages.append(
+        AIMessage(
+            content=f"[bottom_line_handler] rejected\n{feedback}",
+        ),
+    )
+    return {"messages": updated_messages, "user_input": updated_messages, "bottom_line_feedback": feedback}
 
 
 def intention_detection_node(state: TLCState) -> dict[str, Any]:
@@ -227,6 +185,18 @@ def planner_node(state: TLCState) -> dict[str, Any]:
     return {"plan": res, "plan_cursor": 0, "messages": updated_messages, "user_input": updated_messages}
 
 
+def plan_review_node(state: TLCState) -> dict[str, Any]:
+    """
+    Human-in-the-loop plan review.
+
+    - approve: proceed to executor
+    - reject (optionally with comment): revise user input and re-enter planner
+    """
+    plan_out = _get_plan_output(state)
+    messages = _ensure_messages(state)
+    return human_interact_agent.review_plan(plan_out=plan_out, messages=messages)
+
+
 def dispatch_todo_node(state: TLCState) -> dict[str, Any]:
     """Prepare next todo for execution (idempotency + optional human approval)."""
     plan_out = _get_plan_output(state)
@@ -248,21 +218,7 @@ def dispatch_todo_node(state: TLCState) -> dict[str, Any]:
 
     step = plan_out.plan_steps[cursor]
     if step.requires_human_approval:
-        interrupt_payload = OperationInterruptPayload(
-            message="Approve executing this step? If not, reject; optionally edit input in 'comment'.",
-            args={
-                "step": {
-                    "id": step.id,
-                    "title": step.title,
-                    "executor": str(step.executor),
-                    "args": step.args,
-                    "requires_human_approval": step.requires_human_approval,
-                    "status": step.status.value,
-                },
-            },
-        )
-        payload = interrupt(interrupt_payload.model_dump(mode="json"))
-        resume = OperationResume(**payload)
+        resume = human_interact_agent.approve_step(step=step)
 
         if resume.approval:
             step.requires_human_approval = False
@@ -287,38 +243,39 @@ def dispatch_todo_node(state: TLCState) -> dict[str, Any]:
     return updates
 
 
-def execute_tlc_node(state: TLCState) -> dict[str, Any]:
-    """Execute TLC-related step using TLCAgent (multi-turn form collection + confirmation + placeholder MCP lookup)."""
+def prepare_tlc_step_node(state: TLCState) -> dict[str, Any]:
+    """Mark TLC step as in-progress and normalize messages before entering the TLC subgraph."""
     cursor, step = _get_current_step(state)
-
     step.status = ExecutionStatusEnum.IN_PROGRESS
+
     messages = _ensure_messages(state)
 
     # Optional: allow plan args to override the latest human text input.
-    # This is useful when planner produces a normalized instruction for the executor.
     input_text = str(step.args.get("input_text", "")).strip()
     if input_text:
         messages = _apply_human_revision(messages, input_text)
 
-    spec_op = tlc_agent.run(user_input=messages, current_form=state.tlc_spec)
-    approved_spec = spec_op.output
+    logger.info("Preparing TLC step cursor={} id={} executor={}", cursor, step.id, step.executor)
+    return {"plan": state.plan, "messages": messages, "user_input": messages, "tlc_phase": TLCPhase.COLLECTING}
+
+
+def finalize_tlc_step_node(state: TLCState) -> dict[str, Any]:
+    """Finalize TLC step after the TLC subgraph has updated `tlc_spec`."""
+    cursor, step = _get_current_step(state)
+    approved_spec = state.tlc_spec
+    if approved_spec is None:
+        raise ValueError("Missing 'tlc_spec' after executing TLC subgraph")
 
     step.output = {
-        "agent": "tlc_agent",
+        "agent": "tlc_agent_subgraph",
         "executor": str(step.executor),
         "args": step.args,
         "spec": approved_spec.model_dump(mode="json"),
     }
     step.status = ExecutionStatusEnum.COMPLETED
 
-    logger.info("Executed TLC step cursor={} id={} executor={}", cursor, step.id, step.executor)
-    return {
-        "plan": state.plan,
-        "tlc_spec": approved_spec,
-        "tlc_phase": TLCPhase.DONE,
-        "messages": spec_op.input,
-        "user_input": spec_op.input,
-    }
+    logger.info("Finalized TLC step cursor={} id={} executor={}", cursor, step.id, step.executor)
+    return {"plan": state.plan, "tlc_phase": TLCPhase.DONE}
 
 
 def execute_unsupported_node(state: TLCState) -> dict[str, Any]:
@@ -339,12 +296,20 @@ def execute_unsupported_node(state: TLCState) -> dict[str, Any]:
 
 # region <router>
 
+# all function that behave as router function should have "route_" prefix and be placed here.
+
 
 def route_admittance(state: TLCState) -> str:
     """Select the next node based on the admittance decision."""
     decision = state.admittance_state or AdmittanceState.NO
     logger.info("Routing based on admittance_state={}", decision.value)
     return decision.value
+
+
+def route_bottom_line(state: TLCState) -> str:
+    """Always terminate after bottom line handler."""
+    _ = state
+    return "done"
 
 
 def route_human_confirm_intention(state: TLCState) -> str:
@@ -375,15 +340,67 @@ def route_next_todo(state: TLCState) -> str:
     logger.info("Routing step cursor={} id={} executor={}", cursor, step.id, step.executor)
 
     if step.executor == ExecutorKey.TLC_AGENT:
-        return "execute_tlc"
+        return "prepare_tlc_step"
 
     return "execute_unsupported"
 
 
-def advance_todo_cursor_node(state: TLCState) -> dict[str, Any]:
+def route_advance_todo_cursor_node(state: TLCState) -> dict[str, Any]:
     """Advance plan_cursor to the next todo."""
     cursor = int(state.plan_cursor)
     return {"plan_cursor": cursor + 1}
+
+
+def route_dispatcher(state: TLCState) -> str:
+    """
+    Pure function router.
+
+    - Query: route to query handler
+    - Consulting: route to consulting handler
+    - Operational: if no PLAN -> planner, else -> executor
+    """
+    intention = state.intention
+    if intention is None:
+        return "done"
+
+    goal_type = intention.output.matched_goal_type
+    if goal_type.value == "management":
+        return "query"
+    if goal_type.value == "consulting":
+        return "consulting"
+
+    if state.plan is None:
+        return "planner"
+    return "executor"
+
+
+def route_plan_review(state: TLCState) -> str:
+    """Route after plan_review HITL."""
+    if state.plan_approved:
+        return "approved"
+    return "revise"
+
+
+def dispatcher_node(state: TLCState) -> dict[str, Any]:
+    """No-op node. Dispatcher logic is in `route_dispatcher`."""
+    _ = state
+    return {}
+
+
+def consulting_handler_node(state: TLCState) -> dict[str, Any]:
+    """Placeholder consulting handler (no business logic yet)."""
+    messages = _ensure_messages(state)
+    updated_messages = list(messages)
+    updated_messages.append(AIMessage(content="[consulting] TODO: implement consulting response"))
+    return {"messages": updated_messages, "user_input": updated_messages}
+
+
+def query_handler_node(state: TLCState) -> dict[str, Any]:
+    """Placeholder query handler (no business logic yet)."""
+    messages = _ensure_messages(state)
+    updated_messages = list(messages)
+    updated_messages.append(AIMessage(content="[query] TODO: implement query response"))
+    return {"messages": updated_messages, "user_input": updated_messages}
 
 
 # endregion

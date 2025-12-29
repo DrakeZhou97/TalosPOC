@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from langchain.agents import create_agent
+from langchain.agents.middleware.types import after_agent
 from langchain.agents.structured_output import StructuredOutputValidationError
 from langchain_core.messages import AnyMessage
 

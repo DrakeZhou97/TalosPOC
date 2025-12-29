@@ -28,17 +28,12 @@ def streaming() -> None:
         ),
     ]
 
-    # print(_pretty([thread_id, config, conversation]))
-
     next_input: TLCState | Command = TLCState(user_input=conversation, messages=conversation)
 
     while True:
-        # interrupt_payload: Any | None = None
-
-        for state in talos_agent.stream(next_input, config=config, stream_mode="messages"):
+        for state in talos_agent.stream(next_input, config=config, stream_mode="values"):
             print(f"Updated States: {_pretty(state)}")
 
-            # Catch Human In the Loop
             if "__interrupt__" in state:
                 itp: Interrupt = state["__interrupt__"][0]
 
@@ -51,6 +46,4 @@ def streaming() -> None:
 
 
 if __name__ == "__main__":
-    # main()
-
     streaming()

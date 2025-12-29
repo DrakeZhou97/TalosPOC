@@ -31,6 +31,8 @@ class TLCState(BaseModel):
         description="The latest user input message.",
     )
     human_confirmation: OperationResponse[str, HumanApproval] | None = None
+    plan_approved: bool = False
+    bottom_line_feedback: str | None = None
 
     # Internal Usage
     id_res: OperationResponse[list[AnyMessage], UserAdmittance] | None = None
@@ -50,3 +52,5 @@ class TLCState(BaseModel):
     # TLC Execution (multi-turn)
     tlc_phase: TLCPhase = TLCPhase.COLLECTING
     tlc_spec: TLCAgentOutput | None = None
+
+    mode: str | None = None

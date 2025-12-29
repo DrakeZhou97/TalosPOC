@@ -47,3 +47,13 @@ When compounds are confirmed, it will call TLC MCP server to recommend ratio of 
 3. Python 3.12
 4. ruff
 5. loguru
+
+
+## Notes
+
+To start AGUI Server
+
+```python
+# Under root folder
+python -m src.server
+```
