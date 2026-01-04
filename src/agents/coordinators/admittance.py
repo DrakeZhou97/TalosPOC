@@ -9,20 +9,18 @@ from src.models.operation import OperationResponse
 from src.utils.logging_config import logger
 from src.utils.models import WATCHDOG_MODEL
 from src.utils.PROMPT import WATCH_DOG_SYSTEM_PROMPT
-from src.utils.settings import ChatModelConfig, settings
 
 
 class WatchDogAgent:
     def __init__(self) -> None:
         """Initialize the WatchDogAgent."""
-        self.config: ChatModelConfig = settings.agents.watchdog
         self.watch_dog = create_agent(
             model=WATCHDOG_MODEL,
             response_format=ToolStrategy[WatchDogAIDetermined](WatchDogAIDetermined),
             system_prompt=WATCH_DOG_SYSTEM_PROMPT,
         )
 
-        logger.info("WatchDogAgent initialized with model={}", self.config)
+        logger.info("WatchDogAgent initialized with model={}", self.watch_dog)
 
     def run(self, user_input: list[AnyMessage]) -> OperationResponse[list[AnyMessage], UserAdmittance]:
         """
@@ -96,5 +94,3 @@ if __name__ == "__main__":
     watch_dog = WatchDogAgent()
     result = watch_dog.run(user_input=[HumanMessage(content="I want to know the current time.")])
     print(result)
-
-

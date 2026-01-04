@@ -413,7 +413,12 @@ def route_next_todo(state: AgentState) -> str:
         `"done"` if cursor is out of range; `"prepare_tlc_step"` for `ExecutorKey.TLC_AGENT`; otherwise `"done"`.
 
     """
-    plan_out = _get_plan_output(state)
+    # Navigate to planner if plan is not generated yet.
+    try:
+        plan_out = _get_plan_output(state)
+    except ValueError:
+        return "planner"
+
     cursor = int(state.plan_cursor)
     if cursor >= len(plan_out.plan_steps):
         logger.info("All steps executed. cursor={} total={}", cursor, len(plan_out.plan_steps))
@@ -431,7 +436,7 @@ def route_next_todo(state: AgentState) -> str:
 # endregion
 
 
-# region <executor wrapper>
+# region <specialists wrapper>
 def tlc_agent_node(state: AgentState) -> dict[str, Any]:
     """Run TLC subgraph and map its output into `state.tlc` namespace."""
     out = tlc_agent.compiled.invoke(TLCAgentGraphState(messages=list(state.messages), tlc_spec=state.tlc.spec))

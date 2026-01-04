@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import uuid4
 
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import AIMessage, AnyMessage
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.models.enums import AdmittanceState, ExecutionStatusEnum, ExecutorKey, GoalTypeEnum
@@ -85,25 +85,23 @@ class AgentState(BaseModel):
     # Received Input
     messages: list[AnyMessage] = Field(default_factory=list, description="The whole conversation messages ordered chronologically.")
     user_input: list[AnyMessage] = Field(default_factory=list, description="The latest user input message.")
+    resp_msg: AIMessage = Field(..., description="The response message from the latest ran agent.")
 
-    human_confirmation: OperationResponse[str, HumanApproval] | None = None
-    plan_approved: bool = False
     bottom_line_feedback: str | None = None
-
-    # Internal Usage
-    id_res: OperationResponse[list[AnyMessage], UserAdmittance] | None = None
 
     # Agent Output
     admittance: OperationResponse[list[AnyMessage], UserAdmittance] | None = None
     admittance_state: AdmittanceState | None = None
     intention: OperationResponse[list[AnyMessage], IntentionDetectionFin] | None = None
-    classify_res: OperationResponse[UserAdmittance, str] | None = None
 
     # Planner Output
     plan: OperationResponse[list[AnyMessage], PlanningAgentOutput] | None = None
 
     # Planner Execution
     plan_cursor: int = 0
+
+    # Plan Approval
+    plan_approved: bool = False
 
     # Executor namespaces
     tlc: TLCExecutionState = Field(default_factory=TLCExecutionState)

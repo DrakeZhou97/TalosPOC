@@ -20,6 +20,8 @@ class IntentionDetectionAgent:
             system_prompt=INTENTION_DETECTION_SYSTEM_PROMPT,
         )
 
+        logger.info("IntentionDetectionAgent initialized with model={}", self.intention_detection_agent)
+
     def run(self, user_input: list[AnyMessage]) -> OperationResponse[list[AnyMessage], IntentionDetectionFin]:
         """
         Detect user intention from input messages.
@@ -75,5 +77,3 @@ if __name__ == "__main__":
 
     agent = IntentionDetectionAgent()
     agent.run(user_input=[HumanMessage(content="帮我做个 TLC 点板分析")])
-
-

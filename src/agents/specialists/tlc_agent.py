@@ -268,7 +268,8 @@ class TLCAgent:
             return None
 
 
-tlc_agent_subgraph = TLCAgent()
+# tlc_agent_subgraph = TLCAgent()
+# Avoid import side effects and duplicate initialization, instantiate it in node_mapper.py
 
 if __name__ == "__main__":
     import json

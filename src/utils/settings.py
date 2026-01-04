@@ -12,7 +12,7 @@ load_dotenv()
 class ChatModelConfig(BaseModel):
     """Configuration required to instantiate a chat model."""
 
-    model: str = "gpt-5-mini"
+    model: str = "gpt-5.2"
     base_url: str = "https://yunwu.ai/v1"
     api_key: str = "sk-C593NzPP7sczeVcuS89YBb6Ejkw6gofusjXJpv1QDHMln5QM"
     temperature: float = Field(0.0, ge=0.0, le=2.0)
