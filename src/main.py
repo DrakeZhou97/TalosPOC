@@ -78,7 +78,7 @@ def create_talos_agent(*, checkpointer: MemorySaver | None = None) -> Any:
         # `langgraph dev` (LangGraph API runtime) manages persistence/checkpointing.
         # Passing a custom checkpointer causes the graph loader to fail.
         return workflow.compile()
-    return workflow.compile(checkpointer=checkpointer)
+    return workflow.compile(checkpointer=MemorySaver())
 
 
 talos_agent = create_talos_agent()

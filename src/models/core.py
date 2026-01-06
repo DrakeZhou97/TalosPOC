@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import uuid4
 
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import AnyMessage, HumanMessage
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.models.enums import AdmittanceState, ExecutionStatusEnum, ExecutorKey, GoalTypeEnum
@@ -82,9 +82,15 @@ class AgentState(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="ignore")
 
-    # Received Input
-    messages: list[AnyMessage] = Field(default_factory=list, description="The whole conversation messages ordered chronologically.")
-    user_input: list[AnyMessage] = Field(default_factory=list, description="All user input messages (HumanMessage only) ordered chronologically.")
+    messages: list[AnyMessage] = Field(
+        default_factory=list,
+        description="The whole conversation messages ordered chronologically.",
+    )
+    thinking: list[AnyMessage] = Field(
+        default_factory=list,
+        description="The trace messages contains internal AI output messages ordered chronologically.",
+    )
+    user_input: list[HumanMessage] = Field(default_factory=list, description="All user input messages (HumanMessage only) ordered chronologically.")
     # resp_msg: AIMessage = Field(..., description="The response message from the latest ran agent.")
 
     bottom_line_feedback: str | None = None

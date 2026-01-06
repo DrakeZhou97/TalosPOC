@@ -1,4 +1,4 @@
-![Banner](./assets/talos.png)
+![Banner](./assets/banner.png)
 
 Lab Assistance Proof of Concept version
 
@@ -9,6 +9,29 @@ Talos is an intelligent laboratory assistant robot designed for use in small mol
 - **Lab Operations Insights:** Talos enables users to query experiment task progress, monitor the status of robots and instruments, and check material locations and inventory states in real time.
 
 Talos is purpose-built for small molecule synthesis and DMPK laboratory applications. Requests that fall outside this domain are not supported.
+
+
+
+## Messages的更新逻辑
+基于当前技术栈，前后端的交互是通过 AgentState 的 messages 字段，在 GraphState 中共有三个相关字段：
+
+```python
+class AgentState
+	...
+  messages: list[AnyMessage] # display Messages that consistent with portal
+  thinking: list[AnyMessage] # All messages that contains internal output
+  user_input: list[HumanMessage] # All user input
+```
+
+如上所述，messages字段应该只包含用户输入和处理过后的模型回复；对于中间的内部输入应该放在trace_messages中；user_input则通过pydantic的compute feature维护一个只有HumanMessage的列表。
+
+包含HITL的Agent / Subgraph (如Planner, TLCAgent) 和部分coordinator节点(intention_detection)应该在输出interrupt之前应该：
+
+1. 在生成的结构化数据中包含一个`resp_msg`字段，作为回复
+2. 输出需要确认的内容，通过更新messages输出到前端 
+3. 抛出interrupt
+
+
 
 
 ## Task Decomposition / Plan Generation
