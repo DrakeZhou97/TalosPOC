@@ -5,7 +5,7 @@ from typing import Any
 from langgraph.types import Command, Interrupt
 from pydantic import BaseModel
 
-from src.models.operation import OperationResume
+from src.models.operation import OperationInterruptPayload, OperationResumePayload
 from src.utils.logging_config import logger
 
 
@@ -24,8 +24,8 @@ def _pretty(value: Any) -> str:
     return json.dumps(_jsonable(value), indent=2, ensure_ascii=False, default=str)
 
 
-def coerce_operation_resume(payload: Any) -> OperationResume:
-    """Coerce interrupt() resume payload (JSON string/dict/Pydantic model) into OperationResume."""
+def coerce_operation_resume(payload: Any) -> OperationResumePayload:
+    """Coerce interrupt() resume payload (JSON string/dict/Pydantic model) into OperationResumePayload."""
     if payload is None:
         raise ValueError("interrupt() returned None; missing resume payload")
 
@@ -35,33 +35,34 @@ def coerce_operation_resume(payload: Any) -> OperationResume:
     if isinstance(payload, Mapping) and "resume" in payload:
         payload = payload["resume"]
 
-    if isinstance(payload, OperationResume):
+    if isinstance(payload, OperationResumePayload):
         return payload
 
     if isinstance(payload, BaseModel):
-        return OperationResume.model_validate(payload.model_dump())
+        return OperationResumePayload.model_validate(payload.model_dump())
 
     if isinstance(payload, str):
         text = payload.strip()
         if not text:
             raise ValueError("interrupt() returned an empty resume string")
-        return OperationResume.model_validate_json(text)
+        return OperationResumePayload.model_validate_json(text)
 
     if isinstance(payload, Mapping):
-        return OperationResume.model_validate(dict(payload))
+        return OperationResumePayload.model_validate(dict(payload))
 
-    return OperationResume.model_validate(payload)
+    return OperationResumePayload.model_validate(payload)
 
 
 def terminal_approval_handler(state: dict[str, Any]) -> Command:
     """Terminal approval handler for HITL."""
     itp: Interrupt = state["__interrupt__"][0]
 
-    user_inp = input(f"\nDo you approve? (y/n): {itp.value['message']} \n")
+    interrupt_payload = OperationInterruptPayload.model_validate(itp.value)
+    user_inp = input(f"\nDo you approve? (y/n): {interrupt_payload.message} \n")
 
     approval = user_inp.strip().lower() in {"y", "yes", "approve", "approved"}
     comment = input("Optional comment (enter to skip): ").strip()
 
     logger.info(f"Terminal approval handler received: approval={approval}, comment={comment}")
 
-    return Command(resume=OperationResume(approval=approval, comment=comment, data={}).model_dump())
+    return Command(resume=OperationResumePayload(approval=approval, comment=comment, data={}).model_dump())

@@ -5,9 +5,10 @@ This module keeps LangGraph-specific wiring (routing + minimal state patching).
 Business logic should live in `src/agents/coordinators/` and `src/agents/executors/`.
 """
 
+import json
 from typing import Any
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import SystemMessage
 
 from src.agents.coordinators.admittance import WatchDogAgent
 from src.agents.coordinators.human_interaction import HumanInLoop
@@ -15,16 +16,43 @@ from src.agents.coordinators.intention_detection import IntentionDetectionAgent
 from src.agents.coordinators.planner import PlannerSubgraph
 from src.agents.specialists.tlc_agent import TLCAgent
 from src.models.core import AgentState, PlanningAgentOutput, PlanStep
-from src.models.enums import AdmittanceState, ExecutionStatusEnum, ExecutorKey
-from src.models.tlc import TLCPhase
+from src.models.enums import AdmittanceState, ExecutionStatusEnum, ExecutorKey, TLCPhase
+from src.models.tlc import TLCExecutionState
+from src.presenter import present_final, rebuild_messages_with_final
 from src.utils.logging_config import logger
-from src.utils.messages import apply_human_revision, ensure_messages, only_human_messages
+from src.utils.messages import MessagesUtils
 
 watch_dog = WatchDogAgent()
 human_interact_agent = HumanInLoop()
 intention_detect_agent = IntentionDetectionAgent()
 tlc_agent = TLCAgent()
 planner_agent = PlannerSubgraph()
+
+
+def presenter_node(state: AgentState) -> dict[str, Any]:
+    """
+    Final presenter node (single exit): compose and sanitize user-visible messages.
+
+    This node is the only place that should emit the final assistant answer into
+    `messages`. It rebuilds `messages` to contain only human inputs + the final
+    assistant reply, preventing intermediate drafts/logs from leaking.
+    """
+    messages = MessagesUtils.ensure_messages(state)
+
+    context = {
+        "mode": state.mode,
+        "bottom_line_feedback": state.bottom_line_feedback,
+        "admittance": state.admittance.output.model_dump(mode="json") if state.admittance else None,
+        "intention": state.intention.output.model_dump(mode="json") if state.intention else None,
+        "plan": state.plan.output.model_dump(mode="json") if state.plan else None,
+        "plan_cursor": int(state.plan_cursor),
+        "plan_approved": bool(state.plan_approved),
+        "tlc": state.tlc.model_dump(mode="json"),
+    }
+    ctx_msg = SystemMessage(content=f"CONTEXT_JSON:\n{json.dumps(context, ensure_ascii=False)}")
+
+    final_text = present_final([ctx_msg, *MessagesUtils.only_human_messages(messages)])
+    return {"messages": rebuild_messages_with_final(messages=MessagesUtils.strip_thinking(messages), final_text=final_text)}
 
 
 # region <utils>
@@ -66,8 +94,7 @@ def user_admittance_node(state: AgentState) -> dict[str, Any]:
         A state patch with `admittance`, `admittance_state`, and updated `messages`/`user_input`.
 
     """
-    messages = ensure_messages(state)
-
+    messages = MessagesUtils.ensure_messages(state)
     res = watch_dog.run(user_input=messages)
 
     logger.debug(
@@ -96,7 +123,7 @@ def intention_detection_node(state: AgentState) -> dict[str, Any]:
         A state patch with `intention` and updated `messages`/`user_input`.
 
     """
-    messages = ensure_messages(state)
+    messages = MessagesUtils.ensure_messages(state)
     logger.info("Running intention_detection_node with {} messages", len(messages))
     res = intention_detect_agent.run(user_input=messages)
     return {"intention": res}
@@ -113,24 +140,13 @@ def bottom_line_handler_node(state: AgentState) -> dict[str, Any]:
         state: Current workflow state.
 
     Returns:
-        A state patch with updated `messages`/`user_input` and `bottom_line_feedback`.
+        A state patch with updated `messages` and `bottom_line_feedback`.
 
     """
-    messages = ensure_messages(state)
-    feedback = ""
-    if state.admittance is not None:
-        feedback = str(state.admittance.output.feedback or "").strip()
+    feedback = "当前请求超出系统领域/能力范围, 无法执行。请提供与小分子合成或 DMPK 实验相关的需求。"
 
-    if not feedback:
-        feedback = "当前请求超出系统领域/能力范围, 无法执行。请提供与小分子合成或 DMPK 实验相关的需求。"
-
-    updated_messages = list(messages)
-    updated_messages.append(
-        AIMessage(
-            content=f"[bottom_line_handler] rejected\n{feedback}",
-        ),
-    )
-    return {"messages": updated_messages, "user_input": only_human_messages(updated_messages), "bottom_line_feedback": feedback}
+    messages = MessagesUtils.append_thinking(MessagesUtils.ensure_messages(state), f"[bottom_line_handler] rejected\n{feedback}")
+    return {"messages": messages, "bottom_line_feedback": feedback}
 
 
 def consulting_handler_node(state: AgentState) -> dict[str, Any]:
@@ -147,10 +163,8 @@ def consulting_handler_node(state: AgentState) -> dict[str, Any]:
         A state patch with updated `messages`/`user_input`.
 
     """
-    messages = ensure_messages(state)
-    updated_messages = list(messages)
-    updated_messages.append(AIMessage(content="[consulting] TODO: implement consulting response"))
-    return {"messages": updated_messages, "user_input": only_human_messages(updated_messages)}
+    messages = MessagesUtils.append_thinking(MessagesUtils.ensure_messages(state), "[consulting] TODO: implement consulting response")
+    return {"messages": messages}
 
 
 def query_handler_node(state: AgentState) -> dict[str, Any]:
@@ -167,47 +181,17 @@ def query_handler_node(state: AgentState) -> dict[str, Any]:
         A state patch with updated `messages`/`user_input`.
 
     """
-    messages = ensure_messages(state)
-    updated_messages = list(messages)
-    updated_messages.append(AIMessage(content="[query] TODO: implement query response"))
-    return {"messages": updated_messages, "user_input": only_human_messages(updated_messages)}
+    messages = MessagesUtils.append_thinking(MessagesUtils.ensure_messages(state), "[query] TODO: implement query response")
+    return {"messages": messages}
 
 
 def prepare_tlc_step_node(state: AgentState) -> dict[str, Any]:
-    """
-    Prepare the current TLC plan step before entering the TLC subgraph.
+    """Update state value and validate device status."""
+    messages = MessagesUtils.append_thinking(MessagesUtils.ensure_messages(state), "[prepare_tlc_step] Device status validated")
 
-    This node marks the current plan step as `IN_PROGRESS` and normalizes `messages`/`user_input` for the TLC subgraph. If a per-step human review
-    provided an edited `input_text`, it is applied as the latest human revision so the subgraph sees the corrected prompt. It also sets
-    `tlc.phase=COLLECTING` to indicate the TLC agent should start/continue its form-filling loop.
-
-    If `step.args["input_text"]` is present (e.g., from per-step human approval), treat it as the latest human revision and apply it to messages.
-
-    Args:
-        state: Current workflow state.
-
-    Returns:
-        A state patch with updated `plan`, `messages`/`user_input`, and `tlc.phase=COLLECTING`.
-
-    """
-    cursor, step = _get_current_step(state)
-    step.status = ExecutionStatusEnum.IN_PROGRESS
-
-    messages = ensure_messages(state)
-
-    # Optional override from per-step approval: treat as "latest human input" for the TLC subgraph.
-    input_text = str(step.args.get("input_text", "")).strip()
-    if input_text:
-        messages = apply_human_revision(messages, input_text)
-
-    existing_spec = state.tlc.spec or state.tlc_spec
-    logger.info("Preparing TLC step cursor={} id={} executor={}", cursor, step.id, step.executor)
     return {
-        "plan": state.plan,
+        "tlc": TLCExecutionState(phase=TLCPhase.COLLECTING),
         "messages": messages,
-        "user_input": only_human_messages(messages),
-        "tlc_spec": existing_spec,
-        "tlc": state.tlc.model_copy(update={"phase": TLCPhase.COLLECTING}),
     }
 
 
@@ -230,7 +214,7 @@ def finalize_tlc_step_node(state: AgentState) -> dict[str, Any]:
 
     """
     cursor, step = _get_current_step(state)
-    approved_spec = state.tlc_spec
+    approved_spec = state.tlc.spec
     if approved_spec is None:
         raise ValueError("Missing 'tlc.spec' after executing TLC subgraph")
 
@@ -245,7 +229,6 @@ def finalize_tlc_step_node(state: AgentState) -> dict[str, Any]:
     logger.info("Finalized TLC step cursor={} id={} executor={}", cursor, step.id, step.executor)
     return {
         "plan": state.plan,
-        "tlc_spec": approved_spec,
         "tlc": state.tlc.model_copy(update={"phase": TLCPhase.DONE, "spec": approved_spec}),
         "plan_cursor": cursor + 1,
     }
@@ -281,36 +264,35 @@ def stage_dispatcher(state: AgentState) -> dict[str, Any]:
     if state.intention is None:
         raise ValueError("Missing 'intention' before stage_dispatcher")
 
-    updated_messages = ensure_messages(state)
-
     # Append trace message here (join point) to avoid concurrent updates from parallel nodes.
+    messages = MessagesUtils.ensure_messages(state)
     adm = state.admittance.output if state.admittance is not None else None
     itn = state.intention.output
-    updated_messages.append(
-        AIMessage(
-            content="\n".join(
-                [
-                    "[stage_dispatcher] join results",
-                    f"admittance_state={state.admittance_state}",
-                    f"within_domain={getattr(adm, 'within_domain', None)}, within_capacity={getattr(adm, 'within_capacity', None)}",
-                    f"winner_id={itn.winner_id}",
-                    f"matched_goal_type={itn.matched_goal_type}",
-                    f"reason={itn.reason}",
-                ],
-            ),
+
+    messages = MessagesUtils.append_thinking(
+        messages,
+        "\n".join(
+            [
+                "[stage_dispatcher] join results",
+                f"admittance_state={state.admittance_state}",
+                f"within_domain={getattr(adm, 'within_domain', None)}, within_capacity={getattr(adm, 'within_capacity', None)}",
+                f"winner_id={itn.winner_id}",
+                f"matched_goal_type={itn.matched_goal_type}",
+                f"reason={itn.reason}",
+            ],
         ),
     )
 
     if state.admittance_state == AdmittanceState.NO:
-        return {"mode": "rejected", "messages": updated_messages, "user_input": only_human_messages(updated_messages)}
+        return {"mode": "rejected", "messages": messages}
 
     goal = state.intention.output.matched_goal_type.value
     if goal == "management":
-        return {"mode": "query", "messages": updated_messages, "user_input": only_human_messages(updated_messages)}
+        return {"mode": "query", "messages": messages}
     if goal == "consulting":
-        return {"mode": "consulting", "messages": updated_messages, "user_input": only_human_messages(updated_messages)}
+        return {"mode": "consulting", "messages": messages}
     if goal == "execution":
-        return {"mode": "execution", "messages": updated_messages, "user_input": only_human_messages(updated_messages)}
+        return {"mode": "execution", "messages": messages}
 
     raise ValueError(f"Unknown matched_goal_type={goal!r}")
 

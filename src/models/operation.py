@@ -6,12 +6,6 @@ T = TypeVar("T")
 K = TypeVar("K")
 
 
-class OperationResume(BaseModel):
-    approval: bool = Field(..., description="Whether the operation is approved to resume.")
-    comment: str | None = Field(default=None, description="Human reviewing feedback")
-    data: Any | None = Field(default=None, description="Optional structured data payload from UI (e.g., edited form JSON)")
-
-
 class OperationResponse[T, K](BaseModel):
     operation_id: str = Field(..., description="Unique identifier for the operation.")
     input: T = Field(
@@ -28,10 +22,14 @@ class OperationResponse[T, K](BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
 
+class OperationResumePayload(BaseModel):
+    approval: bool = Field(..., description="Whether the operation is approved to resume.")
+    comment: str | None = Field(default=None, description="Human reviewing feedback")
+    data: Any | None = Field(default=None, description="Optional structured data payload from UI (e.g., edited form JSON)")
+
+
 class OperationInterruptPayload(BaseModel):
     """HITL Operation Interrupt Payload Class."""
 
     message: str = Field(..., description="Message describe the current operation that need human approve")
     args: Any = Field(..., description="other meta data come alone with operation")
-
-

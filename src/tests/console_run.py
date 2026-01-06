@@ -8,14 +8,14 @@ from langgraph.types import Command, Interrupt
 
 from src.main import talos_agent
 from src.models.core import AgentState
-from src.models.operation import OperationResume
+from src.models.operation import OperationResumePayload
 from src.utils.tools import _pretty
 
 
-def _parse_human_approval(inp: str) -> OperationResume:
+def _parse_human_approval(inp: str) -> OperationResumePayload:
     normalized = (inp or "").strip().lower()
     approval = normalized in {"y", "yes", "approve", "approved"}
-    return OperationResume(approval=approval, comment=None)
+    return OperationResumePayload(approval=approval, comment=None)
 
 
 def streaming() -> None:
@@ -28,7 +28,7 @@ def streaming() -> None:
         ),
     ]
 
-    next_input: AgentState | Command = AgentState(user_input=conversation, messages=conversation)
+    next_input: AgentState | Command = AgentState(messages=conversation)
 
     while True:
         for state in talos_agent.stream(next_input, config=config, stream_mode="values"):

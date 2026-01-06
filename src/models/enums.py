@@ -28,3 +28,9 @@ class ExecutorKey(StrEnum):
     # PROPERTY_LOOKUP = "property.lookup"
 
 
+class TLCPhase(str, Enum):
+    COLLECTING = "collecting"
+    AWAITING_INFO = "awaiting_info"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    CONFIRMED = "confirmed"
+    DONE = "done"

@@ -11,7 +11,7 @@ from langgraph.types import Command, Interrupt
 
 from src.main import create_talos_agent
 from src.models.core import AgentState
-from src.models.operation import OperationResume
+from src.models.operation import OperationResumePayload
 from src.utils.tools import _pretty
 
 
@@ -19,9 +19,9 @@ def _prompt(prompt: str) -> str:
     return input(prompt).strip()
 
 
-def _parse_resume() -> OperationResume:
+def _parse_resume() -> OperationResumePayload:
     """
-    Collect an OperationResume from terminal input.
+    Collect an OperationResumePayload from terminal input.
 
     - approve: y/yes/approve/approved
     - comment: optional free text
@@ -40,7 +40,7 @@ def _parse_resume() -> OperationResume:
         except json.JSONDecodeError as exc:
             print(f"[warn] Invalid JSON, ignoring. error={exc}")
 
-    return OperationResume(approval=approval, comment=comment, data=data)
+    return OperationResumePayload(approval=approval, comment=comment, data=data)
 
 
 def _render_last_assistant(messages: list[AnyMessage]) -> None:
@@ -68,7 +68,7 @@ def main() -> None:
             break
 
         conversation.append(HumanMessage(content=user_text))
-        next_input: AgentState | Command = AgentState(messages=list(conversation), user_input=list(conversation))
+        next_input: AgentState | Command = AgentState(messages=list(conversation))
         last_state: dict[str, Any] | None = None
 
         while True:

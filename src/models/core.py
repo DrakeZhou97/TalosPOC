@@ -1,12 +1,11 @@
 from typing import Any
-from uuid import uuid4
 
 from langchain_core.messages import AnyMessage, HumanMessage
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from src.models.enums import AdmittanceState, ExecutionStatusEnum, ExecutorKey, GoalTypeEnum
 from src.models.operation import OperationResponse
-from src.models.tlc import TLCAgentOutput, TLCPhase
+from src.models.tlc import TLCExecutionState
 
 
 class IDAIDetermine(BaseModel):
@@ -41,15 +40,6 @@ class UserAdmittance(WatchDogAIDetermined):
     user_input: list[AnyMessage]
 
 
-class HumanApproval(BaseModel):
-    """Represents the outcome of a human approval step."""
-
-    id: str = Field(default_factory=lambda: str(uuid4()), description="Unique identifier for this approval decision.")
-    approval: bool = Field(..., description="Whether the human reviewer approved proceeding.")
-    reviewed: IntentionDetectionFin = Field(..., description="The operation response that was reviewed.")
-    comment: str | None = Field(None, description="Revised user input provided when the decision is 'edit'.")
-
-
 class PlanStep(BaseModel):
     id: str
     title: str
@@ -65,18 +55,6 @@ class PlanningAgentOutput(BaseModel):
     plan_hash: str = Field(..., description="Hash of the plan")
 
 
-class TLCExecutionState(BaseModel):
-    """
-    TLC subflow execution state.
-
-    Keeps TLC-specific multi-turn fields in a dedicated namespace so the main
-    workflow state doesn't grow unbounded as we add more executors.
-    """
-
-    phase: TLCPhase = TLCPhase.COLLECTING
-    spec: TLCAgentOutput | None = None
-
-
 class AgentState(BaseModel):
     """LangGraph state schema (main workflow)."""
 
@@ -88,10 +66,18 @@ class AgentState(BaseModel):
     )
     thinking: list[AnyMessage] = Field(
         default_factory=list,
-        description="The trace messages contains internal AI output messages ordered chronologically.",
+        description="Internal trace AI messages ordered chronologically.",
     )
-    user_input: list[HumanMessage] = Field(default_factory=list, description="All user input messages (HumanMessage only) ordered chronologically.")
-    # resp_msg: AIMessage = Field(..., description="The response message from the latest ran agent.")
+
+    @computed_field(return_type=list[HumanMessage])
+    @property
+    def user_input(self) -> list[HumanMessage]:
+        """
+        Derived user-only messages from `messages`.
+
+        This is a read-only view to avoid duplicating state and inconsistent writes.
+        """
+        return [m for m in self.messages if isinstance(m, HumanMessage)]
 
     bottom_line_feedback: str | None = None
 
@@ -111,8 +97,6 @@ class AgentState(BaseModel):
 
     # Executor namespaces
     tlc: TLCExecutionState = Field(default_factory=TLCExecutionState)
-    # Compatibility bridge: TLCAgent subgraph reads/writes `tlc_spec` at top-level.
-    tlc_spec: TLCAgentOutput | None = None
 
     # System Stage for Routing purpose
     mode: str | None = None

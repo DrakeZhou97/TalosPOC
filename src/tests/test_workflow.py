@@ -10,14 +10,13 @@ from langgraph.types import Command, Interrupt
 from langgraph.types import interrupt as lg_interrupt
 
 from src import node_mapper
-from src.agents.coordinators.human_interaction import HumanInLoop
 from src.agents.coordinators.planner import Planner
-from src.agents.specialists.tlc_agent import TLCAgentGraphState
 from src.main import create_talos_agent
 from src.models.core import AgentState, IntentionDetectionFin, PlanningAgentOutput, PlanStep, UserAdmittance
-from src.models.enums import ExecutionStatusEnum, ExecutorKey, GoalTypeEnum
-from src.models.operation import OperationResponse, OperationResume
-from src.models.tlc import Compound, TLCAgentOutput, TLCCompoundSpecItem, TLCPhase
+from src.models.enums import ExecutionStatusEnum, ExecutorKey, GoalTypeEnum, TLCPhase
+from src.models.operation import OperationInterruptPayload, OperationResponse, OperationResumePayload
+from src.models.tlc import Compound, TLCAgentGraphState, TLCAgentOutput, TLCCompoundSpecItem
+from src.utils.tools import coerce_operation_resume
 
 
 def _op_response(*, operation_id: str, input_value: Any, output_value: Any) -> OperationResponse[Any, Any]:
@@ -44,17 +43,25 @@ def _stub_planner_run(_self: Planner, *, user_input: list[AnyMessage]) -> Operat
     return _op_response(operation_id="planner_test", input_value=user_input, output_value=out)
 
 
-def _auto_approve_plan_review(_self: HumanInLoop, *, plan_out: PlanningAgentOutput, messages: list[AnyMessage]) -> dict[str, Any]:
-    """Skip interrupt(): auto-approve the plan."""
-    _ = plan_out, messages
-    return {"plan_approved": True}
+def _stub_planner_compiled_no_hitl(*, plan_out: PlanningAgentOutput) -> Any:
+    """A tiny planner subgraph-as-node runnable that writes `plan` + `plan_approved=True` (no interrupts)."""
+
+    def _finish(state: AgentState) -> dict[str, Any]:
+        plan = _op_response(operation_id="planner_test", input_value=list(state.messages), output_value=plan_out)
+        return {"plan": plan, "plan_cursor": 0, "plan_approved": True, "messages": list(state.messages)}
+
+    g = StateGraph(AgentState)
+    g.add_node("finish", _finish)
+    g.add_edge(START, "finish")
+    g.add_edge("finish", END)
+    return g.compile()
 
 
 def _stub_tlc_compiled_no_hitl(*, tlc_spec: TLCAgentOutput) -> Any:
     """A tiny TLC subgraph-as-node runnable that just writes `tlc_spec` (no interrupts)."""
 
     def _finish(state: TLCAgentGraphState) -> dict[str, Any]:
-        return {"tlc_spec": tlc_spec, "messages": list(state.messages)}
+        return {"tlc": state.tlc.model_copy(update={"spec": tlc_spec}), "messages": list(state.messages)}
 
     g = StateGraph(TLCAgentGraphState)
     g.add_node("finish", _finish)
@@ -68,17 +75,16 @@ def _stub_tlc_compiled_with_hitl(*, tlc_spec: TLCAgentOutput) -> Any:
 
     def _write_spec(state: TLCAgentGraphState) -> dict[str, Any]:
         _ = state
-        return {"tlc_spec": tlc_spec.model_copy(update={"confirmed": False})}
+        return {"tlc": state.tlc.model_copy(update={"spec": tlc_spec.model_copy(update={"confirmed": False})})}
 
     def _user_confirm(state: TLCAgentGraphState) -> dict[str, Any]:
-        assert state.tlc_spec is not None
-        payload = {"message": "Please confirm the TLC spec.", "args": {"tlc_spec": state.tlc_spec.model_dump(mode="json")}}
-        resume_raw = lg_interrupt(payload)
-        resume = (
-            OperationResume.model_validate(resume_raw.get("resume", resume_raw))
-            if isinstance(resume_raw, dict)
-            else OperationResume.model_validate(resume_raw)
+        assert state.tlc.spec is not None
+        payload = OperationInterruptPayload(
+            message="Please confirm the TLC spec.",
+            args={"tlc": {"spec": state.tlc.spec.model_dump(mode="json")}},
         )
+        resume_raw = lg_interrupt(payload.model_dump(mode="json"))
+        resume = coerce_operation_resume(resume_raw)
         return {"user_approved": bool(resume.approval)}
 
     def _route_confirm(state: TLCAgentGraphState) -> str:
@@ -87,7 +93,7 @@ def _stub_tlc_compiled_with_hitl(*, tlc_spec: TLCAgentOutput) -> Any:
     def _fill_ratio(state: TLCAgentGraphState) -> dict[str, Any]:
         _ = state
         # Use the deterministic stubbed spec and mark confirmed; mimic TLCAgent's final output shape.
-        return {"tlc_spec": tlc_spec.model_copy(update={"confirmed": True})}
+        return {"tlc": state.tlc.model_copy(update={"spec": tlc_spec.model_copy(update={"confirmed": True})})}
 
     g = StateGraph(TLCAgentGraphState)
     g.add_node("write_spec", _write_spec)
@@ -133,11 +139,11 @@ def test_bottom_line_handler_flow(monkeypatch: pytest.MonkeyPatch) -> None:
 
     agent = _build_agent()
     msgs: list[AnyMessage] = [HumanMessage(content="what's the weather?")]
-    init = AgentState(messages=msgs, user_input=msgs)
+    init = AgentState(messages=msgs)
     result = agent.invoke(init, config={"configurable": {"thread_id": "t-bottom-line"}})
 
-    assert result["bottom_line_feedback"] == "out of domain"
-    assert any("[bottom_line_handler] rejected" in m.content for m in result["messages"])
+    assert result["bottom_line_feedback"] == "当前请求超出系统领域/能力范围, 无法执行。请提供与小分子合成或 DMPK 实验相关的需求。"
+    assert len(result["messages"]) == 2
 
 
 def test_consulting_route(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,10 +173,10 @@ def test_consulting_route(monkeypatch: pytest.MonkeyPatch) -> None:
 
     agent = _build_agent()
     msgs: list[AnyMessage] = [HumanMessage(content="帮我推荐一个 TLC 条件")]
-    init = AgentState(messages=msgs, user_input=msgs)
+    init = AgentState(messages=msgs)
     result = agent.invoke(init, config={"configurable": {"thread_id": "t-consult"}})
 
-    assert any("[consulting]" in m.content for m in result["messages"])
+    assert result["mode"] == "consulting"
 
 
 def test_execution_tlc_subgraph_flow(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -197,8 +203,19 @@ def test_execution_tlc_subgraph_flow(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(node_mapper.watch_dog, "run", _watchdog_run)
     monkeypatch.setattr(node_mapper.intention_detect_agent, "run", _intention_run)
-    monkeypatch.setattr(Planner, "run", _stub_planner_run)
-    monkeypatch.setattr(HumanInLoop, "review_plan", _auto_approve_plan_review)
+
+    step = PlanStep(
+        id="s1",
+        title="TLC step",
+        executor=ExecutorKey.TLC_AGENT,
+        args={},
+        requires_human_approval=False,  # avoid extra HITL in specialist_dispatcher
+        status=ExecutionStatusEnum.NOT_STARTED,
+        output=None,
+    )
+    plan_out = PlanningAgentOutput(plan_steps=[step], plan_hash="hash_test")
+    stub_planner = type("StubPlanner", (), {"compiled": _stub_planner_compiled_no_hitl(plan_out=plan_out)})()
+    monkeypatch.setattr(node_mapper.planner_agent, "compiled", stub_planner.compiled)
 
     tlc_spec = TLCAgentOutput(
         compounds=[Compound(compound_name="Aspirin", smiles=None)],
@@ -222,7 +239,7 @@ def test_execution_tlc_subgraph_flow(monkeypatch: pytest.MonkeyPatch) -> None:
 
     agent = _build_agent()
     msgs: list[AnyMessage] = [HumanMessage(content="我要做 TLC 点板并生成条件")]
-    init = AgentState(messages=msgs, user_input=msgs)
+    init = AgentState(messages=msgs)
     result = agent.invoke(init, config={"configurable": {"thread_id": "t-exec-tlc"}})
 
     plan: OperationResponse[Any, PlanningAgentOutput] = result["plan"]
@@ -312,7 +329,7 @@ def test_streaming_hitl_resume_two_interrupts(monkeypatch: pytest.MonkeyPatch) -
     msgs: list[AnyMessage] = [HumanMessage(content="我要做 TLC 点板并生成条件")]
     config: dict[str, Any] = {"configurable": {"thread_id": "t-stream-hitl"}}
 
-    next_input: AgentState | Command = AgentState(messages=msgs, user_input=msgs)
+    next_input: AgentState | Command = AgentState(messages=msgs)
     last_state: dict[str, Any] | None = None
     interrupts_seen = 0
 
@@ -327,7 +344,7 @@ def test_streaming_hitl_resume_two_interrupts(monkeypatch: pytest.MonkeyPatch) -
                 itp: Interrupt = state["__interrupt__"][0]
                 assert "message" in itp.value
 
-                resume = OperationResume(approval=True, comment=None, data=None)
+                resume = OperationResumePayload(approval=True, comment=None, data=None)
                 next_input = Command(resume=resume.model_dump())
                 resumed = True
                 break

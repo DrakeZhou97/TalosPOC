@@ -23,13 +23,15 @@ class AgentState
   user_input: list[HumanMessage] # All user input
 ```
 
-如上所述，messages字段应该只包含用户输入和处理过后的模型回复；对于中间的内部输入应该放在trace_messages中；user_input则通过pydantic的compute feature维护一个只有HumanMessage的列表。
+如上所述，messages字段应该只包含用户输入和处理过后的模型回复；对于中间的内部输入应该放在rs中；user_input则通过pydantic的compute feature维护一个只有HumanMessage的列表。
 
 包含HITL的Agent / Subgraph (如Planner, TLCAgent) 和部分coordinator节点(intention_detection)应该在输出interrupt之前应该：
 
-1. 在生成的结构化数据中包含一个`resp_msg`字段，作为回复
-2. 输出需要确认的内容，通过更新messages输出到前端 
-3. 抛出interrupt
+1. 生成结构化数据即为需要review的内容（封装进OperationInterruptPayload）
+2. presenter输出需要确认的内容，添加到payload的message字段
+3. 抛出interrupt和payload
+
+除此之外的节点在END前会经过presenter节点，并rebuild message
 
 
 

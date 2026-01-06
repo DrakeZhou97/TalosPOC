@@ -22,16 +22,19 @@ from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import AIMessage, AnyMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.agents.coordinators.human_interaction import HumanInLoop
 from src.models.core import PlanningAgentOutput, PlanStep
 from src.models.enums import ExecutionStatusEnum, ExecutorKey
-from src.models.operation import OperationResponse
+from src.models.operation import OperationInterruptPayload, OperationResponse
+from src.presenter import present_review
 from src.utils.logging_config import logger
-from src.utils.messages import only_human_messages
+from src.utils.messages import MessagesUtils
 from src.utils.models import PLANNER_MODEL
 from src.utils.PROMPT import PLANNER_SYSTEM_PROMPT
+from src.utils.tools import coerce_operation_resume
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -98,10 +101,13 @@ class PlannerGraphState(BaseModel):
 
     messages: list[AnyMessage] = Field(default_factory=list)
     user_input: list[AnyMessage] = Field(default_factory=list)
+    thinking: list[AnyMessage] = Field(default_factory=list)
 
     plan: OperationResponse[list[AnyMessage], PlanningAgentOutput] | None = None
     plan_cursor: int = 0
     plan_approved: bool = False
+    pending_interrupt: OperationInterruptPayload | None = None
+    revision_text: str | None = None
 
 
 class PlannerSubgraph:
@@ -114,73 +120,108 @@ class PlannerSubgraph:
 
         subgraph = StateGraph(PlannerGraphState)
         subgraph.add_node("generate_plan", self._generate_plan)
-        subgraph.add_node("plan_review", self._plan_review)
+        subgraph.add_node("plan_review_present", self._plan_review_present)
+        subgraph.add_node("plan_review_interrupt", self._plan_review_interrupt)
+        subgraph.add_node("plan_revision_present", self._plan_revision_present)
 
         subgraph.add_edge(START, "generate_plan")
-        subgraph.add_edge("generate_plan", "plan_review")
+        subgraph.add_edge("generate_plan", "plan_review_present")
+        subgraph.add_edge("plan_review_present", "plan_review_interrupt")
         subgraph.add_conditional_edges(
-            "plan_review",
+            "plan_review_interrupt",
             self._route_plan_review,
             {
-                "revise": "generate_plan",
+                "revise": "plan_revision_present",
                 "approved": END,
             },
         )
+        subgraph.add_edge("plan_revision_present", "generate_plan")
 
         checkpointer = MemorySaver() if with_checkpointer else None
         self.compiled = subgraph.compile(checkpointer=checkpointer)
 
     @staticmethod
     def _ensure_messages(state: PlannerGraphState) -> list[AnyMessage]:
-        return list(state.messages or state.user_input)
+        return MessagesUtils.ensure_messages(state)  # type: ignore[arg-type]
+
+    @staticmethod
+    def _ensure_work_messages(state: PlannerGraphState) -> list[AnyMessage]:
+        # Use the latest human-only messages as execution context.
+        # (For now, revisions are appended by presenter nodes into `messages`.)
+        return MessagesUtils.only_human_messages(MessagesUtils.ensure_messages(state))  # type: ignore[arg-type]
 
     def _generate_plan(self, state: PlannerGraphState) -> dict[str, Any]:
-        messages = self._ensure_messages(state)
-        logger.info("PlannerSubgraph.generate_plan with {} messages", len(messages))
+        work_messages = self._ensure_work_messages(state)
+        logger.info("PlannerSubgraph.generate_plan with {} messages", len(work_messages))
 
-        res = self._planner.run(user_input=messages)
+        res = self._planner.run(user_input=work_messages)
         plan_out = res.output
-
-        steps_preview = "\n".join(
-            [
-                f"- {idx + 1}. {s.title} (executor={s.executor}, requires_human_approval={s.requires_human_approval})"
-                for idx, s in enumerate(plan_out.plan_steps)
-            ],
-        )
-
-        updated_messages = list(messages)
-        updated_messages.append(
-            AIMessage(
-                content="\n".join(
-                    [
-                        "[planner] plan_created",
-                        f"plan_hash={plan_out.plan_hash}",
-                        "steps:",
-                        steps_preview or "- (no steps)",
-                    ],
-                ),
-            ),
-        )
 
         return {
             "plan": res,
             "plan_cursor": 0,
             "plan_approved": False,
-            "messages": updated_messages,
-            "user_input": only_human_messages(updated_messages),
+            "messages": MessagesUtils.append_thinking(
+                MessagesUtils.ensure_messages(state),  # type: ignore[arg-type]
+                f"[planner] plan_created plan_hash={plan_out.plan_hash} steps={len(plan_out.plan_steps)}",
+            ),
         }
 
-    def _plan_review(self, state: PlannerGraphState) -> dict[str, Any]:
+    def _plan_review_present(self, state: PlannerGraphState) -> dict[str, Any]:
+        """Presenter step before interrupt: write user-facing review prompt into messages."""
         if state.plan is None:
             raise ValueError("Missing 'plan' before plan_review")
-        messages = self._ensure_messages(state)
+        plan_out = state.plan.output
 
-        updates = self._human.review_plan(plan_out=state.plan.output, messages=messages)
-        if not updates.get("plan_approved"):
-            # Explicitly clear old plan on reject, so parent graph won't treat it as executable.
-            updates["plan"] = None
-            updates["plan_cursor"] = 0
+        # 1) Build structured payload.
+        base_payload = self._human.build_plan_review_payload(plan_out=plan_out)
+        payload = OperationInterruptPayload(
+            message=present_review(
+                MessagesUtils.only_human_messages(MessagesUtils.ensure_messages(state)),  # type: ignore[arg-type]
+                kind="plan_review",
+                args=base_payload.args,
+            ),
+            args=base_payload.args,
+        )
+
+        # 2) Presenter message to UI before interrupt. (Keep history; final presenter will clean.)
+        messages = [*MessagesUtils.ensure_messages(state), AIMessage(content=payload.message)]  # type: ignore[arg-type]
+
+        return {"messages": messages, "pending_interrupt": payload, "plan_approved": False}
+
+    def _plan_review_interrupt(self, state: PlannerGraphState) -> dict[str, Any]:
+        """Interrupt + apply resume result (approval/edit) after UI response."""
+        if state.pending_interrupt is None:
+            raise ValueError("Missing 'pending_interrupt' before plan_review_interrupt")
+
+        raw = interrupt(state.pending_interrupt.model_dump(mode="json"))
+        resume = self._human.normalize_resume(coerce_operation_resume(raw))
+
+        updates: dict[str, Any] = {"pending_interrupt": None, "plan_approved": bool(resume.approval)}
+        if resume.approval:
+            return updates
+
+        edited_text = (resume.comment or "").strip()
+        if edited_text:
+            updates["revision_text"] = edited_text
+        # Explicitly clear old plan on reject, so parent graph won't treat it as executable.
+        updates["plan"] = None
+        updates["plan_cursor"] = 0
         return updates
+
+    def _plan_revision_present(self, state: PlannerGraphState) -> dict[str, Any]:
+        """
+        Presenter for human revision after plan rejection.
+
+        This node is the only place that appends the revised HumanMessage into UI `messages`.
+        Execution context is derived from human messages and may be overridden via `thinking` markers.
+        """
+        edited_text = (state.revision_text or "").strip()
+        if not edited_text:
+            return {"revision_text": None}
+
+        messages = [*list(state.messages), HumanMessage(content=edited_text)]
+        return {"messages": messages, "revision_text": None}
 
     @staticmethod
     def _route_plan_review(state: PlannerGraphState) -> str:

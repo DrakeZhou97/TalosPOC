@@ -26,6 +26,7 @@ def create_talos_workflow() -> StateGraph:
     workflow.add_node("prepare_tlc_step", node_mapper.prepare_tlc_step_node)
     workflow.add_node("tlc_agent", node_mapper.tlc_agent.compiled)
     workflow.add_node("finalize_tlc_step", node_mapper.finalize_tlc_step_node)
+    workflow.add_node("presenter", node_mapper.presenter_node)
     # workflow.add_node("checkpoint", node_mapper.survey_inspect)
 
     # region <draw>
@@ -36,7 +37,7 @@ def create_talos_workflow() -> StateGraph:
     workflow.add_edge(["user_admittance", "intention_detection"], "stage_dispatcher")
 
     # Go to bottom line handler if not admitted and END flow
-    workflow.add_edge("bottom_line_handler", END)
+    workflow.add_edge("bottom_line_handler", "presenter")
 
     # Route to different handlers based on stage_dispatcher.mode.
     workflow.add_conditional_edges(
@@ -49,8 +50,8 @@ def create_talos_workflow() -> StateGraph:
             "rejected": "bottom_line_handler",
         },
     )
-    workflow.add_edge("consulting_handler", END)
-    workflow.add_edge("query_handler", END)
+    workflow.add_edge("consulting_handler", "presenter")
+    workflow.add_edge("query_handler", "presenter")
 
     workflow.add_conditional_edges(
         "specialist_dispatcher",
@@ -58,7 +59,7 @@ def create_talos_workflow() -> StateGraph:
         {
             "planner": "planner",
             "prepare_tlc_step": "prepare_tlc_step",
-            "done": END,
+            "done": "presenter",
         },
     )
 
@@ -66,6 +67,7 @@ def create_talos_workflow() -> StateGraph:
     workflow.add_edge("prepare_tlc_step", "tlc_agent")
     workflow.add_edge("tlc_agent", "finalize_tlc_step")
     workflow.add_edge("finalize_tlc_step", "specialist_dispatcher")
+    workflow.add_edge("presenter", END)
 
     # endregion
     return workflow
@@ -102,7 +104,6 @@ def _test_workflow() -> None:
 
     next_input = AgentState(
         messages=[HumanMessage(content="我正在进行水杨酸的乙酰化反应制备乙酰水杨酸帮我进行中控监测IPC")],
-        user_input=[HumanMessage(content="我正在进行水杨酸的乙酰化反应制备乙酰水杨酸帮我进行中控监测IPC")],
     )
 
     while True:
@@ -115,6 +116,8 @@ def _test_workflow() -> None:
 
                 next_input = terminal_approval_handler(state)
                 break
+            else:
+                print(state["messages"])
 
 
 if __name__ == "__main__":

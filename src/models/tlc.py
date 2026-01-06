@@ -1,15 +1,10 @@
-from enum import Enum
-
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import AnyMessage, HumanMessage
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.models.enums import TLCPhase
+from src.models.operation import OperationInterruptPayload
 
-class TLCPhase(str, Enum):
-    COLLECTING = "collecting"
-    AWAITING_INFO = "awaiting_info"
-    AWAITING_CONFIRMATION = "awaiting_confirmation"
-    CONFIRMED = "confirmed"
-    DONE = "done"
+# region <TLC MCP>
 
 
 class Compound(BaseModel):
@@ -38,6 +33,9 @@ class TLCRatioPayload(BaseModel):
     timestamp: str
 
 
+# endregion
+
+
 class TLCAIOutput(BaseModel):
     """Extract compound information from user input text."""
 
@@ -50,11 +48,22 @@ class TLCCompoundSpecItem(Compound, TLCRatioResult):
 
 
 class TLCAgentOutput(TLCAIOutput):
-    spec: list[TLCCompoundSpecItem] = Field(
+    exp_params: list[TLCCompoundSpecItem] = Field(
         ...,
         description="List of compound specifications including MCP recommended ratios",
     )
     confirmed: bool = Field(default=False, description="Whether the compound form has been confirmed by user/human")
+
+
+class TLCExecutionState(BaseModel):
+    """
+    TLC subflow execution state.
+
+    Keeps TLC-specific multi-turn fields isolated so the main workflow state stays small.
+    """
+
+    phase: TLCPhase = TLCPhase.COLLECTING
+    spec: TLCAgentOutput | None = None
 
 
 class TLCAgentGraphState(BaseModel):
@@ -62,9 +71,13 @@ class TLCAgentGraphState(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="ignore")
 
-    # Parent graph will pass `messages` and may pass existing `tlc_spec`.
+    # Shared
     messages: list[AnyMessage] = Field(default_factory=list)
-    tlc_spec: TLCAgentOutput | None = None
+    user_input: list[HumanMessage] = Field(default_factory=list)
+    tlc: TLCExecutionState = Field(default_factory=TLCExecutionState)
 
-    # Internal-only routing flag.
+    # Private
+    thinking: list[AnyMessage] = Field(default_factory=list)
+    pending_interrupt: OperationInterruptPayload | None = None
+    revision_text: str | None = None
     user_approved: bool | None = None
