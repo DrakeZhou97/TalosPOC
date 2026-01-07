@@ -28,6 +28,24 @@ tlc_agent = TLCAgent()
 planner_agent = PlannerAgent()
 
 
+# region <utils>
+# NOTE: Small helpers only. Avoid business logic here.
+
+
+def _get_plan_output(state: AgentState) -> PlannerAgentOutput:
+    """Get `PlannerAgentOutput` from `state.plan` (raises if missing)."""
+    plan = state.plan
+    if plan is None:
+        raise ValueError("Missing 'plan' in state")
+    return plan
+
+
+def _get_current_step(state: AgentState) -> tuple[int, PlanStep]:
+    """Return `(cursor, current_step)` from `state.plan_cursor` and `state.plan.plan_steps`."""
+    cursor = int(state.plan_cursor)
+    return cursor, _get_plan_output(state).plan_steps[cursor]
+
+
 def presenter_node(state: AgentState) -> dict[str, Any]:
     """
     Final presenter node (single exit): compose and sanitize user-visible messages.
@@ -52,24 +70,6 @@ def presenter_node(state: AgentState) -> dict[str, Any]:
 
     final_text = present_final([ctx_msg, *MsgUtils.only_human_messages(messages)])
     return {"messages": MsgUtils.append_response(messages, final_text)}
-
-
-# region <utils>
-# NOTE: Small helpers only. Avoid business logic here.
-
-
-def _get_plan_output(state: AgentState) -> PlannerAgentOutput:
-    """Get `PlannerAgentOutput` from `state.plan` (raises if missing)."""
-    plan = state.plan
-    if plan is None:
-        raise ValueError("Missing 'plan' in state")
-    return plan
-
-
-def _get_current_step(state: AgentState) -> tuple[int, PlanStep]:
-    """Return `(cursor, current_step)` from `state.plan_cursor` and `state.plan.plan_steps`."""
-    cursor = int(state.plan_cursor)
-    return cursor, _get_plan_output(state).plan_steps[cursor]
 
 
 # endregion
@@ -325,6 +325,7 @@ def route_next_todo(state: AgentState) -> str:
 
 # endregion
 
+
 # region <TLC>
 
 
@@ -335,7 +336,13 @@ def tlc_router(state: AgentState) -> dict[str, Any]:
 
 def route_tlc_next_todo(state: AgentState) -> str:
     """Route to the TLC next todo."""
-    return "prepare_tlc_step"
+
+    if state.tlc.spec is None and state.tlc.phase != TLCPhase.CONFIRMED:
+        return "prepare_tlc_step"
+    if state.tlc.phase == TLCPhase.CONFIRMED:
+        return "done"
+
+    return "done"
 
 
 def prepare_tlc_step_node(state: AgentState) -> dict[str, Any]:

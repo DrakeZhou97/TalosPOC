@@ -68,6 +68,7 @@ def create_talos_workflow() -> StateGraph:
         {
             "planner": "planner",
             "tlc_router": "tlc_router",
+            # "lcms_router": "lcms_router", # e.g.
             "done": "presenter",
         },
     )
@@ -75,10 +76,17 @@ def create_talos_workflow() -> StateGraph:
     workflow.add_edge("planner", "specialist_dispatcher")
 
     # TLC Agent
-    workflow.add_edge("tlc_router", "prepare_tlc_step")
     workflow.add_edge("prepare_tlc_step", "tlc_agent")
     workflow.add_edge("tlc_agent", "finalize_tlc_step")
-    workflow.add_edge("finalize_tlc_step", "specialist_dispatcher")
+    workflow.add_edge("finalize_tlc_step", "tlc_router")
+    workflow.add_conditional_edges(
+        "tlc_router",
+        node_mapper.route_tlc_next_todo,
+        {
+            "prepare_tlc_step": "prepare_tlc_step",
+            "done": "specialist_dispatcher",
+        },
+    )
 
     workflow.add_edge("presenter", END)
 
