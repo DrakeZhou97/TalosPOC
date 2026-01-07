@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import AnyMessage
 from langgraph.types import interrupt
 from pydantic import Field
 
-from src.models.core import PlanningAgentOutput, PlanStep
 from src.models.operation import OperationInterruptPayload, OperationResumePayload
-from src.utils.messages import MessagesUtils
+from src.utils.messages import MsgUtils
 from src.utils.tools import coerce_operation_resume
+
+if TYPE_CHECKING:
+    from src.models.core import PlanningAgentOutput, PlanStep
 
 DecisionPayload = dict[str, Any]
 
@@ -38,9 +40,9 @@ class HumanInLoop:
 
         edited_text = (resume.comment or "").strip()
         if edited_text:
-            revised_messages = MessagesUtils.apply_human_revision(messages, edited_text)
+            revised_messages = MsgUtils.apply_human_revision(messages, edited_text)
             updates["messages"] = revised_messages
-            updates["user_input"] = MessagesUtils.only_human_messages(revised_messages)
+            updates["user_input"] = MsgUtils.only_human_messages(revised_messages)
         return updates
 
     def approve_step(self, *, step: PlanStep) -> OperationResumePayload:

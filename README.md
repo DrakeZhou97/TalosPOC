@@ -33,6 +33,8 @@ class AgentState
 
 除此之外的节点在END前会经过presenter节点，并rebuild message
 
+Rebuild Messages before interrupt or END (Any stop point)
+
 
 
 

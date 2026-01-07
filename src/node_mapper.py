@@ -18,9 +18,9 @@ from src.agents.specialists.tlc_agent import TLCAgent
 from src.models.core import AgentState, PlanningAgentOutput, PlanStep
 from src.models.enums import AdmittanceState, ExecutionStatusEnum, ExecutorKey, TLCPhase
 from src.models.tlc import TLCExecutionState
-from src.presenter import present_final, rebuild_messages_with_final
+from src.presenter import present_final
 from src.utils.logging_config import logger
-from src.utils.messages import MessagesUtils
+from src.utils.messages import MsgUtils
 
 watch_dog = WatchDogAgent()
 human_interact_agent = HumanInLoop()
@@ -37,7 +37,7 @@ def presenter_node(state: AgentState) -> dict[str, Any]:
     `messages`. It rebuilds `messages` to contain only human inputs + the final
     assistant reply, preventing intermediate drafts/logs from leaking.
     """
-    messages = MessagesUtils.ensure_messages(state)
+    messages = MsgUtils.ensure_messages(state)
 
     context = {
         "mode": state.mode,
@@ -49,10 +49,11 @@ def presenter_node(state: AgentState) -> dict[str, Any]:
         "plan_approved": bool(state.plan_approved),
         "tlc": state.tlc.model_dump(mode="json"),
     }
+
     ctx_msg = SystemMessage(content=f"CONTEXT_JSON:\n{json.dumps(context, ensure_ascii=False)}")
 
-    final_text = present_final([ctx_msg, *MessagesUtils.only_human_messages(messages)])
-    return {"messages": rebuild_messages_with_final(messages=MessagesUtils.strip_thinking(messages), final_text=final_text)}
+    final_text = present_final([ctx_msg, *MsgUtils.only_human_messages(messages)])
+    return {"messages": MsgUtils.append_response(messages, final_text)}
 
 
 # region <utils>
@@ -94,7 +95,7 @@ def user_admittance_node(state: AgentState) -> dict[str, Any]:
         A state patch with `admittance`, `admittance_state`, and updated `messages`/`user_input`.
 
     """
-    messages = MessagesUtils.ensure_messages(state)
+    messages = MsgUtils.ensure_messages(state)
     res = watch_dog.run(user_input=messages)
 
     logger.debug(
@@ -123,7 +124,7 @@ def intention_detection_node(state: AgentState) -> dict[str, Any]:
         A state patch with `intention` and updated `messages`/`user_input`.
 
     """
-    messages = MessagesUtils.ensure_messages(state)
+    messages = MsgUtils.ensure_messages(state)
     logger.info("Running intention_detection_node with {} messages", len(messages))
     res = intention_detect_agent.run(user_input=messages)
     return {"intention": res}
@@ -145,7 +146,7 @@ def bottom_line_handler_node(state: AgentState) -> dict[str, Any]:
     """
     feedback = "当前请求超出系统领域/能力范围, 无法执行。请提供与小分子合成或 DMPK 实验相关的需求。"
 
-    messages = MessagesUtils.append_thinking(MessagesUtils.ensure_messages(state), f"[bottom_line_handler] rejected\n{feedback}")
+    messages = MsgUtils.append_thinking(MsgUtils.ensure_messages(state), f"[bottom_line_handler] rejected\n{feedback}")
     return {"messages": messages, "bottom_line_feedback": feedback}
 
 
@@ -163,7 +164,7 @@ def consulting_handler_node(state: AgentState) -> dict[str, Any]:
         A state patch with updated `messages`/`user_input`.
 
     """
-    messages = MessagesUtils.append_thinking(MessagesUtils.ensure_messages(state), "[consulting] TODO: implement consulting response")
+    messages = MsgUtils.append_thinking(MsgUtils.ensure_messages(state), "[consulting] TODO: implement consulting response")
     return {"messages": messages}
 
 
@@ -181,13 +182,13 @@ def query_handler_node(state: AgentState) -> dict[str, Any]:
         A state patch with updated `messages`/`user_input`.
 
     """
-    messages = MessagesUtils.append_thinking(MessagesUtils.ensure_messages(state), "[query] TODO: implement query response")
+    messages = MsgUtils.append_thinking(MsgUtils.ensure_messages(state), "[query] TODO: implement query response")
     return {"messages": messages}
 
 
 def prepare_tlc_step_node(state: AgentState) -> dict[str, Any]:
     """Update state value and validate device status."""
-    messages = MessagesUtils.append_thinking(MessagesUtils.ensure_messages(state), "[prepare_tlc_step] Device status validated")
+    messages = MsgUtils.append_thinking(MsgUtils.ensure_messages(state), "[prepare_tlc_step] Device status validated")
 
     return {
         "tlc": TLCExecutionState(phase=TLCPhase.COLLECTING),
@@ -265,11 +266,11 @@ def stage_dispatcher(state: AgentState) -> dict[str, Any]:
         raise ValueError("Missing 'intention' before stage_dispatcher")
 
     # Append trace message here (join point) to avoid concurrent updates from parallel nodes.
-    messages = MessagesUtils.ensure_messages(state)
+    messages = MsgUtils.ensure_messages(state)
     adm = state.admittance.output if state.admittance is not None else None
     itn = state.intention.output
 
-    messages = MessagesUtils.append_thinking(
+    messages = MsgUtils.append_thinking(
         messages,
         "\n".join(
             [

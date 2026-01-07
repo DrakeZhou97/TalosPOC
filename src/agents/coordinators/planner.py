@@ -31,7 +31,7 @@ from src.models.enums import ExecutionStatusEnum, ExecutorKey
 from src.models.operation import OperationInterruptPayload, OperationResponse
 from src.presenter import present_review
 from src.utils.logging_config import logger
-from src.utils.messages import MessagesUtils
+from src.utils.messages import MsgUtils
 from src.utils.models import PLANNER_MODEL
 from src.utils.PROMPT import PLANNER_SYSTEM_PROMPT
 from src.utils.tools import coerce_operation_resume
@@ -142,13 +142,13 @@ class PlannerSubgraph:
 
     @staticmethod
     def _ensure_messages(state: PlannerGraphState) -> list[AnyMessage]:
-        return MessagesUtils.ensure_messages(state)  # type: ignore[arg-type]
+        return MsgUtils.ensure_messages(state)  # type: ignore[arg-type]
 
     @staticmethod
     def _ensure_work_messages(state: PlannerGraphState) -> list[AnyMessage]:
         # Use the latest human-only messages as execution context.
         # (For now, revisions are appended by presenter nodes into `messages`.)
-        return MessagesUtils.only_human_messages(MessagesUtils.ensure_messages(state))  # type: ignore[arg-type]
+        return MsgUtils.only_human_messages(MsgUtils.ensure_messages(state))  # type: ignore[arg-type]
 
     def _generate_plan(self, state: PlannerGraphState) -> dict[str, Any]:
         work_messages = self._ensure_work_messages(state)
@@ -161,8 +161,8 @@ class PlannerSubgraph:
             "plan": res,
             "plan_cursor": 0,
             "plan_approved": False,
-            "messages": MessagesUtils.append_thinking(
-                MessagesUtils.ensure_messages(state),  # type: ignore[arg-type]
+            "messages": MsgUtils.append_thinking(
+                MsgUtils.ensure_messages(state),  # type: ignore[arg-type]
                 f"[planner] plan_created plan_hash={plan_out.plan_hash} steps={len(plan_out.plan_steps)}",
             ),
         }
@@ -177,7 +177,7 @@ class PlannerSubgraph:
         base_payload = self._human.build_plan_review_payload(plan_out=plan_out)
         payload = OperationInterruptPayload(
             message=present_review(
-                MessagesUtils.only_human_messages(MessagesUtils.ensure_messages(state)),  # type: ignore[arg-type]
+                MsgUtils.only_human_messages(MsgUtils.ensure_messages(state)),  # type: ignore[arg-type]
                 kind="plan_review",
                 args=base_payload.args,
             ),
@@ -185,7 +185,7 @@ class PlannerSubgraph:
         )
 
         # 2) Presenter message to UI before interrupt. (Keep history; final presenter will clean.)
-        messages = [*MessagesUtils.ensure_messages(state), AIMessage(content=payload.message)]  # type: ignore[arg-type]
+        messages = [*MsgUtils.ensure_messages(state), AIMessage(content=payload.message)]  # type: ignore[arg-type]
 
         return {"messages": messages, "pending_interrupt": payload, "plan_approved": False}
 

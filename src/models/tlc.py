@@ -40,7 +40,6 @@ class TLCAIOutput(BaseModel):
     """Extract compound information from user input text."""
 
     compounds: list[Compound | None] = Field(default_factory=list, description="List of compounds extracted from the text")
-    resp_msg: str = Field(..., description="Message to user reply / guide next move")
 
 
 class TLCCompoundSpecItem(Compound, TLCRatioResult):
@@ -78,6 +77,5 @@ class TLCAgentGraphState(BaseModel):
 
     # Private
     thinking: list[AnyMessage] = Field(default_factory=list)
-    pending_interrupt: OperationInterruptPayload | None = None
-    revision_text: str | None = None
-    user_approved: bool | None = None
+    revision_text: str = ""
+    user_approved: bool = False

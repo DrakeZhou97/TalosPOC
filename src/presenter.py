@@ -56,9 +56,3 @@ def present_review(messages: list[AnyMessage], *, kind: ReviewKind, args: dict[s
     review_json = json.dumps({"kind": kind, "args": args}, ensure_ascii=False)
     review_msg = SystemMessage(content=f"REVIEW_JSON:\n{review_json}")
     return _invoke([review_msg, *messages], system_prompt=REVIEW_SYSTEM_PROMPT) or "请确认是否继续。"
-
-
-def rebuild_messages_with_final(*, messages: list[Any], final_text: str) -> list[Any]:
-    """Rebuild `messages` to avoid leaking intermediate assistant drafts/logs."""
-    humans = [m for m in messages if isinstance(m, HumanMessage)]
-    return [*humans, AIMessage(content=final_text)]

@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from src.models.core import AgentState
 
 
-class MessagesUtils:
+class MsgUtils:
     @staticmethod
     def append_thinking(messages: list[AnyMessage], text: str) -> list[AnyMessage]:
         """Append an internal "thinking" AIMessage (optional UI-only trace)."""
@@ -17,6 +17,22 @@ class MessagesUtils:
         if not text:
             return list(messages)
         return [*list(messages), AIMessage(content=text, additional_kwargs={"display_label": "thinking"})]
+
+    @staticmethod
+    def append_user_message(message: list[AnyMessage], text: str) -> list[AnyMessage]:
+        """Append a new HumanMessage to the conversation."""
+        text = str(text or "").strip()
+        if not text:
+            return list(message)
+        return [*list(message), HumanMessage(content=text)]
+
+    @staticmethod
+    def append_response(messages: list[AnyMessage], text: str) -> list[AnyMessage]:
+        """Append a new AIMessage to the conversation."""
+        text = str(text or "").strip()
+        if not text:
+            return list(messages)
+        return [*list(messages), AIMessage(content=text)]
 
     @staticmethod
     def strip_thinking(messages: list[AnyMessage]) -> list[AnyMessage]:

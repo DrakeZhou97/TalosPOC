@@ -45,6 +45,8 @@ ignore = [
     "FBT002",
     "N999",    # No snake_name check
     "PLC0415", # Use noqa to ignore warnings
+    "D200",
+    "D202",
 ]
 
 [format]

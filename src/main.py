@@ -116,8 +116,8 @@ def _test_workflow() -> None:
 
                 next_input = terminal_approval_handler(state)
                 break
-            else:
-                print(state["messages"])
+
+            print(state["messages"])
 
 
 if __name__ == "__main__":
