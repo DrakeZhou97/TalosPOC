@@ -6,7 +6,6 @@ Business logic should live in `src/agents/coordinators/` and `src/agents/executo
 """
 
 import json
-from contextlib import suppress
 from typing import Any
 
 from copilotkit.langgraph import copilotkit_emit_state
@@ -58,7 +57,7 @@ def _get_current_step(state: AgentState) -> tuple[int, PlanStep]:
     return cursor, _get_plan_output(state).plan_steps[cursor]
 
 
-async def presenter_node(state: AgentState) -> dict[str, Any]:
+def presenter_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     """
     Final presenter node (single exit): compose and sanitize user-visible messages.
 
@@ -80,7 +79,7 @@ async def presenter_node(state: AgentState) -> dict[str, Any]:
 
     ctx_msg = SystemMessage(content=f"CONTEXT_JSON:\n{json.dumps(context, ensure_ascii=False)}")
 
-    final_text = await present_final([ctx_msg, *MsgUtils.only_human_messages(messages)])
+    final_text = present_final([ctx_msg, *MsgUtils.only_human_messages(messages)], config=config)
     return {"messages": MsgUtils.append_response(messages, final_text)}
 
 
@@ -106,18 +105,14 @@ async def user_admittance_node(state: AgentState, config: RunnableConfig) -> dic
         A state patch with `admittance`, `admittance_state`, and updated `messages`/`user_input`.
 
     """
-    # Emit step progress to frontend (best-effort; ignore if no callback context, e.g. unit tests invoking the node directly)
-    with suppress(RuntimeError):
-        await copilotkit_emit_state(
-            config,
-            {
-                "current_step": "user_admittance_node",
-                "step_message": STEP_MESSAGES["user_admittance_node"],
-            },
-        )
+    # Emit step progress to frontend
+    await copilotkit_emit_state(config, {
+        "current_step": "user_admittance_node",
+        "step_message": STEP_MESSAGES["user_admittance_node"],
+    })
 
     messages = MsgUtils.ensure_messages(state)
-    res = await watch_dog.run(user_input=messages)
+    res = watch_dog.run(user_input=messages)
 
     logger.debug(
         "[LG][Admittance Node] Admittance decision: within_domain={}, within_capacity={}",
@@ -148,18 +143,14 @@ async def intention_detection_node(state: AgentState, config: RunnableConfig) ->
         A state patch with `intention` and updated `messages`/`user_input`.
 
     """
-    # Emit step progress to frontend (best-effort; ignore if no callback context)
-    with suppress(RuntimeError):
-        await copilotkit_emit_state(
-            config,
-            {
-                "current_step": "intention_detection_node",
-                "step_message": STEP_MESSAGES["intention_detection_node"],
-            },
-        )
+    # Emit step progress to frontend
+    await copilotkit_emit_state(config, {
+        "current_step": "intention_detection_node",
+        "step_message": STEP_MESSAGES["intention_detection_node"],
+    })
 
     messages = MsgUtils.ensure_messages(state)
-    res = await intention_detect_agent.run(user_input=messages)
+    res = intention_detect_agent.run(user_input=messages)
 
     logger.debug(
         "[LG][Intention Detection Node] Intention detection decision: winner_id={}, matched_goal_type={}, reason={}",
@@ -186,15 +177,15 @@ def bottom_line_handler_node(state: AgentState) -> dict[str, Any]:
         state: Current workflow state.
 
     Returns:
-        A state patch with updated `messages` and `bottom_line_feedback`.
+        A state patch with updated `thinking` and `bottom_line_feedback`.
 
     """
     logger.debug("[LG][Bottom Line Handler Node] Bottom line handler node triggered")
 
     feedback = "当前请求超出系统领域/能力范围, 无法执行。请提供与小分子合成或 DMPK 实验相关的需求。"
 
-    messages = MsgUtils.append_thinking(MsgUtils.ensure_messages(state), f"[bottom_line_handler] rejected\n{feedback}")
-    return {"messages": messages, "bottom_line_feedback": feedback}
+    thinking = MsgUtils.append_thinking(MsgUtils.ensure_thinking(state), f"[bottom_line_handler] rejected\n{feedback}")
+    return {"thinking": thinking, "bottom_line_feedback": feedback}
 
 
 def consulting_handler_node(state: AgentState) -> dict[str, Any]:
@@ -208,13 +199,13 @@ def consulting_handler_node(state: AgentState) -> dict[str, Any]:
         state: Current workflow state.
 
     Returns:
-        A state patch with updated `messages`/`user_input`.
+        A state patch with updated `thinking`.
 
     """
     logger.debug("[LG][Consulting Handler Node] Consulting handler node triggered")
 
-    messages = MsgUtils.append_thinking(MsgUtils.ensure_messages(state), "[consulting] TODO: implement consulting response")
-    return {"messages": messages}
+    thinking = MsgUtils.append_thinking(MsgUtils.ensure_thinking(state), "[consulting] TODO: implement consulting response")
+    return {"thinking": thinking}
 
 
 def query_handler_node(state: AgentState) -> dict[str, Any]:
@@ -228,13 +219,13 @@ def query_handler_node(state: AgentState) -> dict[str, Any]:
         state: Current workflow state.
 
     Returns:
-        A state patch with updated `messages`/`user_input`.
+        A state patch with updated `thinking`.
 
     """
     logger.debug("[LG][Query Handler Node] Query handler node triggered")
 
-    messages = MsgUtils.append_thinking(MsgUtils.ensure_messages(state), "[query] TODO: implement query response")
-    return {"messages": messages}
+    thinking = MsgUtils.append_thinking(MsgUtils.ensure_thinking(state), "[query] TODO: implement query response")
+    return {"thinking": thinking}
 
 
 # endregion
@@ -260,58 +251,49 @@ async def stage_dispatcher(state: AgentState, config: RunnableConfig) -> dict[st
         config: LangGraph runnable config for CopilotKit state emission.
 
     Returns:
-        A state patch containing `mode` plus updated `messages`/`user_input`.
+        A state patch containing `mode` plus updated `thinking`.
 
     """
-    # Emit step progress to frontend (best-effort; ignore if no callback context)
-    with suppress(RuntimeError):
-        await copilotkit_emit_state(
-            config,
-            {
-                "current_step": "stage_dispatcher",
-                "step_message": STEP_MESSAGES["stage_dispatcher"],
-            },
-        )
+    # Emit step progress to frontend
+    await copilotkit_emit_state(config, {
+        "current_step": "stage_dispatcher",
+        "step_message": STEP_MESSAGES["stage_dispatcher"],
+    })
 
     if state.admittance_state is None:
         raise ValueError("Missing 'admittance_state' before stage_dispatcher")
     if state.intention is None:
         raise ValueError("Missing 'intention' before stage_dispatcher")
 
-    # Append trace message here (join point) to avoid concurrent updates from parallel nodes.
-    messages = MsgUtils.ensure_messages(state)
+    thinking = MsgUtils.ensure_thinking(state)
     adm = state.admittance.output if state.admittance is not None else None
     itn = state.intention.output
 
-    resp_msg = str(
-        (
-            "\n".join(
-                [
-                    "[stage_dispatcher] join results",
-                    f"admittance_state={state.admittance_state}",
-                    f"within_domain={getattr(adm, 'within_domain', None)}, within_capacity={getattr(adm, 'within_capacity', None)}",
-                    f"winner_id={itn.winner_id}",
-                    f"matched_goal_type={itn.matched_goal_type}",
-                    f"reason={itn.reason}",
-                ],
-            ),
-        ),
+    resp_msg = "\n".join(
+        [
+            "[stage_dispatcher] join results",
+            f"admittance_state={state.admittance_state}",
+            f"within_domain={getattr(adm, 'within_domain', None)}, within_capacity={getattr(adm, 'within_capacity', None)}",
+            f"winner_id={itn.winner_id}",
+            f"matched_goal_type={itn.matched_goal_type}",
+            f"reason={itn.reason}",
+        ],
     )
 
     base_result = {"current_step": None, "step_message": None}
-    messages = MsgUtils.append_thinking(messages, resp_msg)
+    thinking = MsgUtils.append_thinking(thinking, resp_msg)
     logger.debug("[LG][Stage Dispatcher Node] Stage dispatcher node triggered: {}", resp_msg)
 
     if state.admittance_state == AdmittanceState.NO:
-        return {"mode": "rejected", "messages": messages, **base_result}
+        return {"mode": "rejected", "thinking": thinking, **base_result}
 
     goal = state.intention.output.matched_goal_type.value
     if goal == "management":
-        return {"mode": "query", "messages": messages, **base_result}
+        return {"mode": "query", "thinking": thinking, **base_result}
     if goal == "consulting":
-        return {"mode": "consulting", "messages": messages, **base_result}
+        return {"mode": "consulting", "thinking": thinking, **base_result}
     if goal == "execution":
-        return {"mode": "execution", "messages": messages, **base_result}
+        return {"mode": "execution", "thinking": thinking, **base_result}
 
     raise ValueError(f"Unknown matched_goal_type={goal!r}")
 
@@ -400,7 +382,6 @@ def route_next_todo(state: AgentState) -> str:
 
 def tlc_router(state: AgentState) -> dict[str, Any]:
     """Route to the TLC router."""
-    _ = state
     return {}
 
 
@@ -417,21 +398,17 @@ def route_tlc_next_todo(state: AgentState) -> str:
 
 async def prepare_tlc_step_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     """Update state value and validate device status."""
-    # Emit step progress to frontend (best-effort; ignore if no callback context)
-    with suppress(RuntimeError):
-        await copilotkit_emit_state(
-            config,
-            {
-                "current_step": "prepare_tlc_step_node",
-                "step_message": STEP_MESSAGES["prepare_tlc_step_node"],
-            },
-        )
+    # Emit step progress to frontend
+    await copilotkit_emit_state(config, {
+        "current_step": "prepare_tlc_step_node",
+        "step_message": STEP_MESSAGES["prepare_tlc_step_node"],
+    })
 
-    messages = MsgUtils.append_thinking(MsgUtils.ensure_messages(state), "[prepare_tlc_step] Device status validated")
+    thinking = MsgUtils.append_thinking(MsgUtils.ensure_thinking(state), "[prepare_tlc_step] Device status validated")
 
     return {
         "tlc": TLCExecutionState(phase=TLCPhase.COLLECTING),
-        "messages": messages,
+        "thinking": thinking,
         "current_step": None,
         "step_message": None,
     }
@@ -456,15 +433,11 @@ async def finalize_tlc_step_node(state: AgentState, config: RunnableConfig) -> d
         ValueError: If `state.tlc.spec` is missing after the TLC subgraph completes.
 
     """
-    # Emit step progress to frontend (best-effort; ignore if no callback context)
-    with suppress(RuntimeError):
-        await copilotkit_emit_state(
-            config,
-            {
-                "current_step": "finalize_tlc_step_node",
-                "step_message": STEP_MESSAGES["finalize_tlc_step_node"],
-            },
-        )
+    # Emit step progress to frontend
+    await copilotkit_emit_state(config, {
+        "current_step": "finalize_tlc_step_node",
+        "step_message": STEP_MESSAGES["finalize_tlc_step_node"],
+    })
 
     cursor, step = _get_current_step(state)
     approved_spec = state.tlc.spec
