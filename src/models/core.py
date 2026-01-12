@@ -53,6 +53,16 @@ class AgentState(BaseModel):
         description="Internal trace AI messages ordered chronologically.",
     )
 
+    # Step-by-step progress tracking for CopilotKit frontend
+    current_step: str | None = Field(
+        default=None,
+        description="Current node/step name for real-time progress display.",
+    )
+    step_message: str | None = Field(
+        default=None,
+        description="User-friendly message describing the current step.",
+    )
+
     @computed_field(return_type=list[HumanMessage])
     @property
     def user_input(self) -> list[HumanMessage]:

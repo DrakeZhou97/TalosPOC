@@ -14,10 +14,13 @@ TODO: Clean Code
 from __future__ import annotations
 
 import uuid
+from contextlib import suppress
 from typing import Any
 
+from copilotkit.langgraph import copilotkit_emit_state
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
+from langchain_core.runnables.config import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
@@ -31,6 +34,12 @@ from src.utils.messages import MsgUtils
 from src.utils.models import PLANNER_MODEL
 from src.utils.PROMPT import PLANNER_SYSTEM_PROMPT
 from src.utils.tools import coerce_operation_resume
+
+# Step messages for CopilotKit frontend progress display
+PLANNER_STEP_MESSAGES = {
+    "generate_plan": "Creating an execution plan for your request...",
+    "plan_review": "Waiting for plan approval...",
+}
 
 
 class PlannerAgent:
@@ -73,7 +82,17 @@ class PlannerAgent:
             system_prompt=PLANNER_SYSTEM_PROMPT,
         )
 
-    def _generate_plan(self, state: PlannerAgentGraphState) -> dict[str, Any]:
+    async def _generate_plan(self, state: PlannerAgentGraphState, config: RunnableConfig) -> dict[str, Any]:
+        # Emit step progress to frontend (best-effort; ignore if no callback context)
+        with suppress(RuntimeError):
+            await copilotkit_emit_state(
+                config,
+                {
+                    "current_step": "generate_plan",
+                    "step_message": PLANNER_STEP_MESSAGES["generate_plan"],
+                },
+            )
+
         work_messages = MsgUtils.only_human_messages(MsgUtils.ensure_messages(state))  # type: ignore[arg-type]
 
         logger.info("[Agent][PlannerAgent] PlannerAgent.generate_plan with {} messages", len(work_messages))
@@ -110,19 +129,32 @@ class PlannerAgent:
                 state.messages,
                 f"[planner] plan_created plan_hash={plan_out.plan_hash} steps={len(plan_out.plan_steps)}",
             ),
+            "current_step": None,
+            "step_message": None,
         }
 
-    async def _interrupt_plan_review(self, state: PlannerAgentGraphState) -> dict[str, Any]:
+    async def _interrupt_plan_review(self, state: PlannerAgentGraphState, config: RunnableConfig) -> dict[str, Any]:
         """
         Interrupt + apply resume for plan review.
 
         This mirrors the TLCAgent HITL pattern: build the review payload, interrupt, then either approve (END) or append a revision message and
         loop back to `generate_plan`.
         """
+        # Emit step progress to frontend (best-effort; ignore if no callback context)
+        with suppress(RuntimeError):
+            await copilotkit_emit_state(
+                config,
+                {
+                    "current_step": "plan_review",
+                    "step_message": PLANNER_STEP_MESSAGES["plan_review"],
+                },
+            )
 
         plan = state.plan
 
         msgs = list(state.messages)
+
+        base_result = {"current_step": None, "step_message": None}
 
         if plan is None:
             # Defensive: if we somehow reached review without a plan, loop back to regenerate.
@@ -131,6 +163,7 @@ class PlannerAgent:
                 "messages": msgs,
                 "plan": None,
                 "plan_cursor": 0,
+                **base_result,
             }
 
         # Generate review message and interrupt payload
@@ -161,11 +194,12 @@ class PlannerAgent:
             return {
                 "messages": MsgUtils.append_response(msgs, resp_msg),
                 "plan": plan.model_copy(update={"user_approval": True}),
+                **base_result,
             }
 
         # On reject: append the revision instruction (if provided) and clear old plan so parent graph won't treat it as executable.
 
-        return {"messages": msgs, "plan": None, "plan_cursor": 0}
+        return {"messages": msgs, "plan": None, "plan_cursor": 0, **base_result}
 
     @staticmethod
     def _route_plan_review(state: PlannerAgentGraphState) -> str:

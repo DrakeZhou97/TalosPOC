@@ -45,3 +45,13 @@ class PlannerAgentGraphState(BaseModel):
 
     plan: PlannerAgentOutput | None = None
     plan_cursor: int = 0
+
+    # Step-by-step progress tracking for CopilotKit frontend
+    current_step: str | None = Field(
+        default=None,
+        description="Current node/step name for real-time progress display.",
+    )
+    step_message: str | None = Field(
+        default=None,
+        description="User-friendly message describing the current step.",
+    )

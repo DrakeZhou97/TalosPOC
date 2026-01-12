@@ -6,9 +6,12 @@ Business logic should live in `src/agents/coordinators/` and `src/agents/executo
 """
 
 import json
+from contextlib import suppress
 from typing import Any
 
+from copilotkit.langgraph import copilotkit_emit_state
 from langchain_core.messages import SystemMessage
+from langchain_core.runnables.config import RunnableConfig
 
 from src.agents.coordinators.admittance import WatchDogAgent
 from src.agents.coordinators.intention_detection import IntentionDetectionAgent
@@ -21,6 +24,15 @@ from src.models.planner import PlannerAgentOutput, PlanStep
 from src.models.tlc import TLCExecutionState
 from src.utils.logging_config import logger
 from src.utils.messages import MsgUtils
+
+# Step messages for CopilotKit frontend progress display
+STEP_MESSAGES = {
+    "user_admittance_node": "Checking if request is within system capabilities...",
+    "intention_detection_node": "Analyzing your intent and matching to available operations...",
+    "stage_dispatcher": "Determining the best workflow for your request...",
+    "prepare_tlc_step_node": "Preparing TLC step for execution...",
+    "finalize_tlc_step_node": "Finalizing TLC step results...",
+}
 
 watch_dog = WatchDogAgent()
 intention_detect_agent = IntentionDetectionAgent()
@@ -78,7 +90,7 @@ async def presenter_node(state: AgentState) -> dict[str, Any]:
 # region <function node and agent wrapper>
 
 
-async def user_admittance_node(state: AgentState) -> dict[str, Any]:
+async def user_admittance_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     """
     Run the domain/capacity gate and write the result into state.
 
@@ -88,11 +100,22 @@ async def user_admittance_node(state: AgentState) -> dict[str, Any]:
 
     Args:
         state: Current workflow state.
+        config: LangGraph runnable config for CopilotKit state emission.
 
     Returns:
         A state patch with `admittance`, `admittance_state`, and updated `messages`/`user_input`.
 
     """
+    # Emit step progress to frontend (best-effort; ignore if no callback context, e.g. unit tests invoking the node directly)
+    with suppress(RuntimeError):
+        await copilotkit_emit_state(
+            config,
+            {
+                "current_step": "user_admittance_node",
+                "step_message": STEP_MESSAGES["user_admittance_node"],
+            },
+        )
+
     messages = MsgUtils.ensure_messages(state)
     res = await watch_dog.run(user_input=messages)
 
@@ -102,13 +125,15 @@ async def user_admittance_node(state: AgentState) -> dict[str, Any]:
         res.output.within_capacity,
     )
 
+    # Note: Don't return current_step/step_message here - this node runs in parallel
+    # with intention_detection_node, and LangGraph can't merge concurrent updates
     return {
         "admittance": res,
         "admittance_state": AdmittanceState.YES if res.output.within_domain and res.output.within_capacity else AdmittanceState.NO,
     }
 
 
-async def intention_detection_node(state: AgentState) -> dict[str, Any]:
+async def intention_detection_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     """
     Run intention detection and store the result in state.
 
@@ -117,11 +142,22 @@ async def intention_detection_node(state: AgentState) -> dict[str, Any]:
 
     Args:
         state: Current workflow state.
+        config: LangGraph runnable config for CopilotKit state emission.
 
     Returns:
         A state patch with `intention` and updated `messages`/`user_input`.
 
     """
+    # Emit step progress to frontend (best-effort; ignore if no callback context)
+    with suppress(RuntimeError):
+        await copilotkit_emit_state(
+            config,
+            {
+                "current_step": "intention_detection_node",
+                "step_message": STEP_MESSAGES["intention_detection_node"],
+            },
+        )
+
     messages = MsgUtils.ensure_messages(state)
     res = await intention_detect_agent.run(user_input=messages)
 
@@ -132,7 +168,11 @@ async def intention_detection_node(state: AgentState) -> dict[str, Any]:
         res.output.reason,
     )
 
-    return {"intention": res}
+    # Note: Don't return current_step/step_message here - this node runs in parallel
+    # with user_admittance_node, and LangGraph can't merge concurrent updates
+    return {
+        "intention": res,
+    }
 
 
 def bottom_line_handler_node(state: AgentState) -> dict[str, Any]:
@@ -207,7 +247,7 @@ def query_handler_node(state: AgentState) -> dict[str, Any]:
 # - Keep routing rules here; keep business logic in agents.
 
 
-def stage_dispatcher(state: AgentState) -> dict[str, Any]:
+async def stage_dispatcher(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     """
     Compute the next stage and write it into `state.mode`.
 
@@ -217,11 +257,22 @@ def stage_dispatcher(state: AgentState) -> dict[str, Any]:
 
     Args:
         state: Current workflow state.
+        config: LangGraph runnable config for CopilotKit state emission.
 
     Returns:
         A state patch containing `mode` plus updated `messages`/`user_input`.
 
     """
+    # Emit step progress to frontend (best-effort; ignore if no callback context)
+    with suppress(RuntimeError):
+        await copilotkit_emit_state(
+            config,
+            {
+                "current_step": "stage_dispatcher",
+                "step_message": STEP_MESSAGES["stage_dispatcher"],
+            },
+        )
+
     if state.admittance_state is None:
         raise ValueError("Missing 'admittance_state' before stage_dispatcher")
     if state.intention is None:
@@ -247,20 +298,20 @@ def stage_dispatcher(state: AgentState) -> dict[str, Any]:
         ),
     )
 
+    base_result = {"current_step": None, "step_message": None}
     messages = MsgUtils.append_thinking(messages, resp_msg)
-
     logger.debug("[LG][Stage Dispatcher Node] Stage dispatcher node triggered: {}", resp_msg)
 
     if state.admittance_state == AdmittanceState.NO:
-        return {"mode": "rejected", "messages": messages}
+        return {"mode": "rejected", "messages": messages, **base_result}
 
     goal = state.intention.output.matched_goal_type.value
     if goal == "management":
-        return {"mode": "query", "messages": messages}
+        return {"mode": "query", "messages": messages, **base_result}
     if goal == "consulting":
-        return {"mode": "consulting", "messages": messages}
+        return {"mode": "consulting", "messages": messages, **base_result}
     if goal == "execution":
-        return {"mode": "execution", "messages": messages}
+        return {"mode": "execution", "messages": messages, **base_result}
 
     raise ValueError(f"Unknown matched_goal_type={goal!r}")
 
@@ -364,17 +415,29 @@ def route_tlc_next_todo(state: AgentState) -> str:
     return "done"
 
 
-def prepare_tlc_step_node(state: AgentState) -> dict[str, Any]:
+async def prepare_tlc_step_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     """Update state value and validate device status."""
+    # Emit step progress to frontend (best-effort; ignore if no callback context)
+    with suppress(RuntimeError):
+        await copilotkit_emit_state(
+            config,
+            {
+                "current_step": "prepare_tlc_step_node",
+                "step_message": STEP_MESSAGES["prepare_tlc_step_node"],
+            },
+        )
+
     messages = MsgUtils.append_thinking(MsgUtils.ensure_messages(state), "[prepare_tlc_step] Device status validated")
 
     return {
         "tlc": TLCExecutionState(phase=TLCPhase.COLLECTING),
         "messages": messages,
+        "current_step": None,
+        "step_message": None,
     }
 
 
-def finalize_tlc_step_node(state: AgentState) -> dict[str, Any]:
+async def finalize_tlc_step_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     """
     Finalize the current TLC plan step after the TLC subgraph completes.
 
@@ -384,6 +447,7 @@ def finalize_tlc_step_node(state: AgentState) -> dict[str, Any]:
 
     Args:
         state: Current workflow state.
+        config: LangGraph runnable config for CopilotKit state emission.
 
     Returns:
         A state patch with updated `plan`, `tlc.phase=DONE`, and `plan_cursor` advanced by 1.
@@ -392,6 +456,16 @@ def finalize_tlc_step_node(state: AgentState) -> dict[str, Any]:
         ValueError: If `state.tlc.spec` is missing after the TLC subgraph completes.
 
     """
+    # Emit step progress to frontend (best-effort; ignore if no callback context)
+    with suppress(RuntimeError):
+        await copilotkit_emit_state(
+            config,
+            {
+                "current_step": "finalize_tlc_step_node",
+                "step_message": STEP_MESSAGES["finalize_tlc_step_node"],
+            },
+        )
+
     cursor, step = _get_current_step(state)
     approved_spec = state.tlc.spec
     if approved_spec is None:
@@ -410,6 +484,8 @@ def finalize_tlc_step_node(state: AgentState) -> dict[str, Any]:
         "plan": state.plan,
         "tlc": state.tlc.model_copy(update={"phase": TLCPhase.DONE, "spec": approved_spec}),
         "plan_cursor": cursor + 1,
+        "current_step": None,
+        "step_message": None,
     }
 
 

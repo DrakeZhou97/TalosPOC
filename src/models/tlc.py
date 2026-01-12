@@ -78,3 +78,13 @@ class TLCAgentGraphState(BaseModel):
     thinking: list[AnyMessage] = Field(default_factory=list)
     revision_text: str = ""
     user_approved: bool = False
+
+    # Step-by-step progress tracking for CopilotKit frontend
+    current_step: str | None = Field(
+        default=None,
+        description="Current node/step name for real-time progress display.",
+    )
+    step_message: str | None = Field(
+        default=None,
+        description="User-friendly message describing the current step.",
+    )

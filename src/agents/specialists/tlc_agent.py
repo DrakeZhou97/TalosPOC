@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import time
 import uuid
+from contextlib import suppress
 from typing import Any
 
 import httpx
+from copilotkit.langgraph import copilotkit_emit_state
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ProviderStrategy
 from langchain_core.messages import HumanMessage
@@ -37,6 +39,13 @@ from src.utils.messages import MsgUtils
 from src.utils.models import TLC_MODEL
 from src.utils.PROMPT import TLC_AGENT_PROMPT
 from src.utils.tools import coerce_operation_resume
+
+# Step messages for CopilotKit frontend progress display
+TLC_STEP_MESSAGES = {
+    "extract_compound_and_fill_spec": "Extracting compound information from your request...",
+    "user_confirm": "Waiting for your confirmation...",
+    "fill_recommended_ratio": "Looking up recommended Rf values and solvent systems...",
+}
 
 
 def get_recommended_ratio(compounds: list[Compound] | None = None) -> list[TLCRatioResult]:
@@ -124,11 +133,21 @@ class TLCAgent:
             response_format=ProviderStrategy(TLCAIOutput),
         )
 
-    def _extract_compound_and_fill_spec(self, state: TLCAgentGraphState) -> dict[str, Any]:
+    async def _extract_compound_and_fill_spec(self, state: TLCAgentGraphState, config: RunnableConfig) -> dict[str, Any]:
         """
         Extract compound info from messages and build tlc.spec.
 
         """
+        # Emit step progress to frontend (best-effort; ignore if no callback context)
+        with suppress(RuntimeError):
+            await copilotkit_emit_state(
+                config,
+                {
+                    "current_step": "extract_compound_and_fill_spec",
+                    "step_message": TLC_STEP_MESSAGES["extract_compound_and_fill_spec"],
+                },
+            )
+
         # Step 1. Invoke
         result = self._agent.invoke({"messages": [*state.messages]})
         model_resp: TLCAIOutput = result["structured_response"]
@@ -145,11 +164,22 @@ class TLCAgent:
         return {
             "tlc": state.tlc.model_copy(update={"spec": updated_agent_output, "phase": TLCPhase.COLLECTING}),
             "messages": messages,
+            "current_step": None,
+            "step_message": None,
         }
 
-    @staticmethod
-    async def _interrupt_user_confirm(state: TLCAgentGraphState) -> dict[str, Any]:
+    async def _interrupt_user_confirm(self, state: TLCAgentGraphState, config: RunnableConfig) -> dict[str, Any]:
         """Interrupt + apply resume for `tlc.spec` confirm/revise."""
+        # Emit step progress to frontend (best-effort; ignore if no callback context)
+        with suppress(RuntimeError):
+            await copilotkit_emit_state(
+                config,
+                {
+                    "current_step": "user_confirm",
+                    "step_message": TLC_STEP_MESSAGES["user_confirm"],
+                },
+            )
+
         if not state.tlc.spec:
             raise ValueError("No SPEC yet")
 
@@ -178,6 +208,8 @@ class TLCAgent:
         updates: dict[str, Any] = {
             "user_approved": bool(resume.approval),
             "messages": messages,
+            "current_step": None,
+            "step_message": None,
         }
 
         # Spec Update
@@ -193,8 +225,17 @@ class TLCAgent:
 
         return updates
 
-    @staticmethod
-    def _fill_recommended_ratio(state: TLCAgentGraphState) -> dict[str, Any]:
+    async def _fill_recommended_ratio(self, state: TLCAgentGraphState, config: RunnableConfig) -> dict[str, Any]:
+        # Emit step progress to frontend (best-effort; ignore if no callback context)
+        with suppress(RuntimeError):
+            await copilotkit_emit_state(
+                config,
+                {
+                    "current_step": "fill_recommended_ratio",
+                    "step_message": TLC_STEP_MESSAGES["fill_recommended_ratio"],
+                },
+            )
+
         if not isinstance(state.tlc.spec, TLCAgentOutput) or not state.tlc.spec.compounds:
             raise TypeError("Missing `tlc.spec`/`compounds` before fill_recommended_ratio")
 
@@ -221,7 +262,12 @@ class TLCAgent:
             f"[tlc] fill_ratio done. compounds={len(compounds)}",
         )
         updated = state.tlc.spec.model_copy(update={"spec": spec, "confirmed": True})
-        return {"tlc": state.tlc.model_copy(update={"spec": updated, "phase": TLCPhase.CONFIRMED}), "messages": messages}
+        return {
+            "tlc": state.tlc.model_copy(update={"spec": updated, "phase": TLCPhase.CONFIRMED}),
+            "messages": messages,
+            "current_step": None,
+            "step_message": None,
+        }
 
     @staticmethod
     def _route_user_confirm(state: TLCAgentGraphState) -> str:
