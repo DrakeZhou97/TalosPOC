@@ -11,12 +11,19 @@ if TYPE_CHECKING:
 
 class MsgUtils:
     @staticmethod
-    def append_thinking(messages: list[AnyMessage], text: str) -> list[AnyMessage]:
-        """Append an internal "thinking" AIMessage (optional UI-only trace)."""
+    def append_thinking(thinking: list[AnyMessage], text: str) -> list[AnyMessage]:
+        """Append an internal thinking AIMessage (use with state.thinking)."""
         text = str(text or "").strip()
         if not text:
-            return list(messages)
-        return [*list(messages), AIMessage(content=text, additional_kwargs={"display_label": "thinking"})]
+            return list(thinking)
+        return [*list(thinking), AIMessage(content=text, additional_kwargs={"display_label": "thinking"})]
+
+    @staticmethod
+    def ensure_thinking(state: "AgentState | Mapping[str, Any]") -> list[AnyMessage]:
+        """Return a copy of thinking messages from state."""
+        if isinstance(state, Mapping):
+            return list(state.get("thinking") or [])
+        return list(getattr(state, "thinking", None) or [])
 
     @staticmethod
     def append_user_message(message: list[AnyMessage], text: str) -> list[AnyMessage]:

@@ -42,6 +42,10 @@ class PlannerAgentGraphState(BaseModel):
 
     messages: list[AnyMessage] = Field(default_factory=list)
     user_input: list[AnyMessage] = Field(default_factory=list)
+    thinking: list[AnyMessage] = Field(
+        default_factory=list,
+        description="Internal trace AI messages ordered chronologically.",
+    )
 
     plan: PlannerAgentOutput | None = None
     plan_cursor: int = 0
