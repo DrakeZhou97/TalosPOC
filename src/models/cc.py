@@ -39,9 +39,7 @@ class CCMCPOutput(BaseModel):
 class CCAgentGraphState(BaseModel):
     messages: list[AnyMessage] = Field(default_factory=list)
     payload: CCBeginSpec | CCRecommendParams | None = None
-    user_approved_1: bool = False
     user_confirmed_1: bool = False
-    user_approved_2: bool = False
     user_confirmed_2: bool = False
 
 

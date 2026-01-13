@@ -61,22 +61,12 @@ class CCAgent:
         subgraph = StateGraph(CCAgentGraphState)
 
         subgraph.add_node("extract_spec", self._extract_spec)
-        subgraph.add_node("interrupt_1", self._interrupt_1)
         subgraph.add_node("free_timepoint_1", self._free_timepoint_1)
         subgraph.add_node("fetch_params", self._fetch_params)
-        subgraph.add_node("interrupt_2", self._interrupt_2)
         subgraph.add_node("free_timepoint_2", self._free_timepoint_2)
 
         subgraph.add_edge(START, "extract_spec")
         subgraph.add_edge("extract_spec", "free_timepoint_1")
-        # subgraph.add_conditional_edges(
-        #     "interrupt_1",
-        #     self._route_interrupt_1,
-        #     {
-        #         "reject": "interrupt_1",
-        #         "accept": "free_timepoint_1",
-        #     },
-        # )
         subgraph.add_conditional_edges( # TODO: 确认下这里逻辑怎么处理，能否根据前端点击confirm还是输入其他文本来判断
             "free_timepoint_1",
             self._route_free_timepoint_1,
@@ -86,14 +76,6 @@ class CCAgent:
             }
         )
         subgraph.add_edge("fetch_params", "free_timepoint_2")
-        # subgraph.add_conditional_edges(
-        #     "interrupt_2",
-        #     self._route_interrupt_2,
-        #     {
-        #         "reject": "interrupt_2",
-        #         "accept": "free_timepoint_2",
-        #     }
-        # )
         subgraph.add_conditional_edges(
             "free_timepoint_2",
             self._route_free_timepoint_2,
@@ -112,16 +94,8 @@ class CCAgent:
         )
 
     @staticmethod
-    def _route_interrupt_1(state: CCAgentGraphState) -> str:
-        return "accept" if state.user_approved_1 else "reject"
-
-    @staticmethod
     def _route_free_timepoint_1(state: CCAgentGraphState) -> str:
         return "confirm" if state.user_confirmed_1 else "revise"
-    
-    @staticmethod
-    def _route_interrupt_2(state: CCAgentGraphState) -> str:
-        return "accept" if state.user_approved_2 else "reject"
 
     @staticmethod
     def _route_free_timepoint_2(state: CCAgentGraphState) -> str:
@@ -137,9 +111,6 @@ class CCAgent:
         )
         # TODO: formulate the spec based on tlc result
         return {"payload": spec}
-
-    @staticmethod
-    def _interrupt_1(state: CCAgentGraphState) -> dict[str, Any]:
         """
         Approve/Reject 中断节点，支持用户编辑表单。
         """
@@ -304,9 +275,6 @@ class CCAgent:
         except Exception as e:
             logger.exception("Failed to fetch CC recommended params")
             raise
-
-    @staticmethod
-    def _interrupt_2(state: CCAgentGraphState) -> dict[str, Any]:
         """
         Approve/Reject 中断节点，支持用户编辑表单。
         """
