@@ -23,6 +23,7 @@ class CCRecommendParams(BaseModel):
     complex_tlc: bool
     column_volume: float
     air_purge_time: float
+    ai_note: str | None = None
 
 class CCMCPOutput(BaseModel):
     success: bool

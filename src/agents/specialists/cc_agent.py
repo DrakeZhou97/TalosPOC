@@ -104,12 +104,11 @@ class CCAgent:
     @staticmethod
     def _extract_spec(state: CCAgentGraphState) -> dict[str, Any]:
         spec = CCBeginSpec(
-            sample_amount=0.1,
-            tlc_json_path="data/tlc_result.json",
-            tlc_data_json_path="data/tlc_data.json",
-            column_size="12g",
+            sample_amount=1.5,
+            tlc_json_path="/app/backend/tmp_api_examples/aspirin_tlc_result.json",
+            tlc_data_json_path="/app/backend/tmp_api_examples/aspirin_tlc_data.json",
+            column_size="40g",
         )
-        # TODO: formulate the spec based on tlc result
         return {"payload": spec}
 
     def _free_timepoint_1(self, state: CCAgentGraphState) -> dict[str, Any]:
@@ -189,19 +188,19 @@ class CCAgent:
         messages = state.messages
 
         try:
-            result = CCRecommendParams(
-                silica_amount=10.5,
-                column_size="12g",
-                flow_rate=30.0,
-                solvent_system="PE/EA",
-                start_solvent_ratio="30:1",
-                end_solvent_ratio="5:1",
-                estimated_time=45.0,
-                complex_tlc=False,
-                column_volume=15.0,
-                air_purge_time=2.0
-            )
-            # result = get_recommended_params(state.payload)
+            # result = CCRecommendParams(
+            #     silica_amount=10.5,
+            #     column_size="12g",
+            #     flow_rate=30.0,
+            #     solvent_system="PE/EA",
+            #     start_solvent_ratio="30:1",
+            #     end_solvent_ratio="5:1",
+            #     estimated_time=45.0,
+            #     complex_tlc=False,
+            #     column_volume=15.0,
+            #     air_purge_time=2.0
+            # )
+            result = get_recommended_params(state.payload)
             logger.info(f"CC params fetched: {result}")
 
             # 添加系统消息记录
