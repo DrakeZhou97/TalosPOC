@@ -111,61 +111,6 @@ class CCAgent:
         )
         # TODO: formulate the spec based on tlc result
         return {"payload": spec}
-        """
-        Approve/Reject 中断节点，支持用户编辑表单。
-        """
-        messages = state.messages
-
-        
-        # 构建中断 payload
-        interrupt_payload = OperationInterruptPayload(
-            message="请确认预填的 CC 表格内容，或修改后重新提交。",
-            args={
-                "cc": {"spec": state.payload.model_dump(mode="json") if state.payload else None},
-                "mode": "approve_reject",
-                "editable": True,  # 告诉前端表单可编辑
-            },
-        )
-
-        # 触发中断
-        raw = interrupt(interrupt_payload.model_dump(mode="json"))
-        resume = coerce_operation_resume(raw)
-
-        # 基础更新
-        updates: dict[str, Any] = {
-            "user_approved_1": bool(resume.approval),
-        }
-
-        if resume.approval:
-            # 批准：检查是否有编辑后的数据
-            if resume.data and isinstance(resume.data, dict):
-                edited_spec = resume.data.get("spec")
-                if edited_spec:
-                    try:
-                        new_payload = CCBeginSpec.model_validate(edited_spec)
-                        updates["payload"] = new_payload
-                        logger.info("Applied user-edited spec on approval")
-                    except Exception:
-                        logger.warning("Failed to parse edited spec, using original")
-        else:
-            # 拒绝：处理 comment 和可能的编辑数据
-            comment_text = (resume.comment or "").strip()
-            if comment_text:
-                messages = MsgUtils.append_user_message(messages, comment_text)
-                updates["messages"] = messages
-
-            # 如果用户编辑了数据，可以选择应用或忽略
-            if resume.data and isinstance(resume.data, dict):
-                edited_spec = resume.data.get("spec")
-                if edited_spec:
-                    try:
-                        new_payload = CCBeginSpec.model_validate(edited_spec)
-                        updates["payload"] = new_payload
-                        logger.info("Applied user-edited spec on rejection")
-                    except Exception:
-                        logger.warning("Failed to parse edited spec from resume.data")
-
-        return updates
 
     def _free_timepoint_1(self, state: CCAgentGraphState) -> dict[str, Any]:
         """
@@ -275,59 +220,6 @@ class CCAgent:
         except Exception as e:
             logger.exception("Failed to fetch CC recommended params")
             raise
-        """
-        Approve/Reject 中断节点，支持用户编辑表单。
-        """
-        messages = state.messages
-
-        interrupt_payload = OperationInterruptPayload(
-            message="请确认 CC 推荐参数，或修改后重新提交。",
-            args={
-                "cc": {"params": state.payload.model_dump(mode="json") if state.payload else None},
-                "mode": "approve_reject",
-                "editable": True,  # 告诉前端表单可编辑
-            },
-        )
-
-        # 触发中断
-        raw = interrupt(interrupt_payload.model_dump(mode="json"))
-        resume: OperationResumePayload = coerce_operation_resume(raw)
-
-        # 基础更新
-        updates: dict[str, Any] = {
-            "user_approved_2": bool(resume.approval),
-        }
-
-        if resume.approval:
-            # 批准：检查是否有编辑后的数据
-            if resume.data and isinstance(resume.data, dict):
-                edited_params = resume.data.get("params")
-                if edited_params:
-                    try:
-                        new_payload = CCRecommendParams.model_validate(edited_params)
-                        updates["payload"] = new_payload
-                        logger.info("Applied user-edited params on approval")
-                    except Exception:
-                        logger.warning("Failed to parse edited params, using original")
-        else:
-            # 拒绝：处理 comment 和可能的编辑数据
-            comment_text = (resume.comment or "").strip()
-            if comment_text:
-                messages = MsgUtils.append_user_message(messages, comment_text)
-                updates["messages"] = messages
-
-            # 如果用户编辑了数据，可以选择应用或忽略
-            if resume.data and isinstance(resume.data, dict):
-                edited_params = resume.data.get("params")
-                if edited_params:
-                    try:
-                        new_payload = CCRecommendParams.model_validate(edited_params)
-                        updates["payload"] = new_payload
-                        logger.info("Applied user-edited params on rejection")
-                    except Exception:
-                        logger.warning("Failed to parse edited params from resume.data")
-
-        return updates
 
     def _free_timepoint_2(self, state: CCAgentGraphState) -> dict[str, Any]:
         """
