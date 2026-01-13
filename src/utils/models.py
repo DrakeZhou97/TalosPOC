@@ -71,6 +71,8 @@ AGENT_MODEL_STRATEGIES: dict[str, ModelStrategy] = {
     "watchdog": StaticConfigStrategy(settings.agents.watchdog),
     "intention_detection": StaticConfigStrategy(settings.agents.intention_detection),
     "tlc_agent": StaticConfigStrategy(settings.agents.tlc_agent),
+    "cc_agent": StaticConfigStrategy(settings.agents.cc_agent),
+    "re_agent": StaticConfigStrategy(settings.agents.re_agent),
     "planner": StaticConfigStrategy(settings.agents.planner),
 }
 
@@ -86,12 +88,16 @@ def get_agent_model(agent_key: str) -> ChatOpenAI:
 WATCHDOG_MODEL = get_agent_model("watchdog")
 INTENTION_DETECTION_MODEL = get_agent_model("intention_detection")
 TLC_MODEL = get_agent_model("tlc_agent")
+CC_MODEL = get_agent_model("cc_agent")
+RE_MODEL = get_agent_model("re_agent")
 PLANNER_MODEL = get_agent_model("planner")
 
 __all__ = [
     "INTENTION_DETECTION_MODEL",
     "PLANNER_MODEL",
     "TLC_MODEL",
+    "CC_MODEL",
+    "RE_MODEL",
     "WATCHDOG_MODEL",
     # "PromptLogger",
     "get_agent_model",

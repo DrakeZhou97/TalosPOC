@@ -15,16 +15,22 @@ from src.agents.coordinators.intention_detection import IntentionDetectionAgent
 from src.agents.coordinators.planner import PlannerAgent
 from src.agents.specialists.presenter import present_final
 from src.agents.specialists.tlc_agent import TLCAgent
+from src.agents.specialists.cc_agent import CCAgent
+# from src.agents.specialists.re_agent import REAgent
 from src.models.core import AgentState
-from src.models.enums import AdmittanceState, ExecutionStatusEnum, ExecutorKey, TLCPhase
+from src.models.enums import AdmittanceState, ExecutionStatusEnum, ExecutorKey, TLCPhase, CCPhase, REPhase
 from src.models.planner import PlannerAgentOutput, PlanStep
 from src.models.tlc import TLCExecutionState
+from src.models.cc import CCExecutionState
+# from src.models.re import REExecutionState
 from src.utils.logging_config import logger
 from src.utils.messages import MsgUtils
 
 watch_dog = WatchDogAgent()
 intention_detect_agent = IntentionDetectionAgent()
 tlc_agent = TLCAgent()
+cc_agent = CCAgent()
+# re_agent = REAgent()
 planner_agent = PlannerAgent()
 
 
@@ -319,6 +325,10 @@ def route_next_todo(state: AgentState) -> str:
 
     if step.executor == ExecutorKey.TLC_AGENT:
         return "tlc_router"
+    if step.executor == ExecutorKey.CC_AGENT:
+        return "cc_router"
+    if step.executor == ExecutorKey.RE_AGENT:
+        return "re_router"
 
     return "done"
 
@@ -392,6 +402,141 @@ def finalize_tlc_step_node(state: AgentState) -> dict[str, Any]:
         "tlc": state.tlc.model_copy(update={"phase": TLCPhase.DONE, "spec": approved_spec}),
         "plan_cursor": cursor + 1,
     }
+
+
+# endregion
+
+
+# region <CC>
+
+
+def cc_router(state: AgentState) -> dict[str, Any]:
+    """Route to the CC router."""
+    return {}
+
+
+def route_cc_next_todo(state: AgentState) -> str:
+    """Route to the CC next todo."""
+
+    if state.cc.spec is None and state.cc.phase != CCPhase.CONFIRMED:
+        return "prepare_cc_step"
+    if state.cc.phase == CCPhase.CONFIRMED:
+        return "done"
+
+    return "done"
+
+def prepare_cc_step_node(state: AgentState) -> dict[str, Any]:
+    """Update state value and validate device status."""
+    messages = MsgUtils.append_thinking(MsgUtils.ensure_messages(state), "[prepare_cc_step] Device status validated")
+    return {
+        "cc": CCExecutionState(phase=CCPhase.COLLECTING),
+        "messages": messages,
+    }
+
+def finalize_cc_step_node(state: AgentState) -> dict[str, Any]:
+    """
+    Finalize the current CC plan step after the CC subgraph completes.
+
+    This node expects `state.cc.spec` to have been produced/confirmed by the CC subgraph. It writes the confirmed spec into the current
+    `PlanStep.output`, marks the step `COMPLETED`, and advances `plan_cursor`. It also sets `cc_phase=DONE` so upstream nodes can treat the CC
+    execution as finished for this step.
+
+    Args:
+        state: Current workflow state.
+
+    Returns:
+        A state patch with updated `plan`, `cc.phase=DONE`, and `plan_cursor` advanced by 1.
+
+    Raises:
+        ValueError: If `state.cc.spec` is missing after the CC subgraph completes.
+
+    """
+    cursor, step = _get_current_step(state)
+    approved_spec = state.cc.spec
+    if approved_spec is None:
+        raise ValueError("Missing 'cc.spec' after executing CC subgraph")
+
+    step.output = {
+        "agent": "cc_agent_subgraph",
+        "executor": str(step.executor),
+        "args": step.args,
+        "spec": approved_spec.model_dump(mode="json"),
+    }
+    step.status = ExecutionStatusEnum.COMPLETED
+
+    logger.info("Finalized CC step cursor={} id={} executor={}", cursor, step.id, step.executor)
+    return {
+        "plan": state.plan,
+        "cc": state.cc.model_copy(update={"phase": CCPhase.DONE, "spec": approved_spec}),
+        "plan_cursor": cursor + 1,
+    }
+
+
+# endregion
+
+
+# region <RE>
+
+
+# def re_router(state: AgentState) -> dict[str, Any]:
+#     """Route to the RE router."""
+#     return {}
+
+# def route_re_next_todo(state: AgentState) -> str:
+#     """Route to the RE next todo."""
+
+#     if state.re.spec is None and state.re.phase != REPhase.CONFIRMED:
+#         return "prepare_re_step"
+#     if state.re.phase == REPhase.CONFIRMED:
+#         return "done"
+
+#     return "done"
+
+# def prepare_re_step_node(state: AgentState) -> dict[str, Any]:
+#     """Update state value and validate device status."""
+#     messages = MsgUtils.append_thinking(MsgUtils.ensure_messages(state), "[prepare_re_step] Device status validated")
+#     return {
+#         "re": REExecutionState(phase=REPhase.COLLECTING),
+#         "messages": messages,
+#     }
+
+# def finalize_re_step_node(state: AgentState) -> dict[str, Any]:
+#     """
+#     Finalize the current RE plan step after the RE subgraph completes.
+
+#     This node expects `state.re.spec` to have been produced/confirmed by the RE subgraph. It writes the confirmed spec into the current
+#     `PlanStep.output`, marks the step `COMPLETED`, and advances `plan_cursor`. It also sets `re_phase=DONE` so upstream nodes can treat the RE
+#     execution as finished for this step.
+
+#     Args:
+#         state: Current workflow state.
+
+#     Returns:
+#         A state patch with updated `plan`, `re.phase=DONE`, and `plan_cursor` advanced by 1.
+
+#     Raises:
+#         ValueError: If `state.re.spec` is missing after the RE subgraph completes.
+
+#     """
+#     cursor, step = _get_current_step(state)
+#     approved_spec = state.re.spec
+#     if approved_spec is None:
+#         raise ValueError("Missing 're.spec' after executing RE subgraph")
+
+#     step.output = {
+#         "agent": "re_agent_subgraph",
+#         "executor": str(step.executor),
+#         "args": step.args,
+#         "spec": approved_spec.model_dump(mode="json"),
+#     }
+#     step.status = ExecutionStatusEnum.COMPLETED
+
+#     logger.info("Finalized RE step cursor={} id={} executor={}", cursor, step.id, step.executor)
+#     return {
+#         "plan": state.plan,
+#         "re": state.re.model_copy(update={"phase": REPhase.DONE, "spec": approved_spec}),
+#         "plan_cursor": cursor + 1,
+#     }
 
 
 # endregion

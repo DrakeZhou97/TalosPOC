@@ -83,6 +83,32 @@ TLC_AGENT_PROMPT = """
 """
 
 
+CC_AGENT_PROMPT = """
+    你是一名经验丰富的化学家助手
+
+    你的任务是根据TLC实验结果，帮助用户先填写过柱实验的SPEC， 并生成符合要求的 JSON 输出:
+    1. sample_amount: 样品质量，以克（g）为单位，float类型
+    2. tlc_json_path: TLC实验结果的JSON文件路径，str类型
+    3. tlc_data_json_path: TLC实验详细数据的JSON文件路径，str类型
+    4. column_size: 柱子大小（可选），str类型
+
+    当用户确认使用该SPEC后，你将调用MCP服务，获取推荐的过柱参数，并生成符合要求的 JSON 输出:
+    1. silica_amount: 硅胶质量，以克（g）为单位，float类型
+    2. column_size: 柱子大小，str类型
+    3. flow_rate: 流速，以毫升/分钟（ml/min）为单位，float类型
+    4. solvent_system: 溶剂系统，以字符串类型，str类型
+    5. start_solvent_ratio: 起始溶剂比例，str类型
+    6. end_solvent_ratio: 终止溶剂比例，str类型
+    7. estimated_time: 估计时间，以分钟（min）为单位，float类型
+    8. complex_tlc: 是否为复杂TLC，bool类型
+    9. column_volume: 柱体积，以毫升（ml）为单位，float类型
+    10. air_purge_time: 空气冲洗时间，以分钟（min）为单位，float类型
+
+    用户可能会通过点击按钮接受或拒绝你的输出，也可能会继续跟你对话进行调整。
+    你需要根据用户的行为来决定下一步的行动。
+"""
+
+
 PLANNER_SYSTEM_PROMPT = """
     你是一名任务规划代理 (Planner Agent)。你的目标是将用户的请求拆解为可执行的任务列表 (TODO List)。
 

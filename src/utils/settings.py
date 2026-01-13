@@ -54,6 +54,24 @@ class AgentModelSettings(BaseModel):
             seed=42,
         ),
     )
+    
+    cc_agent: ChatModelConfig = Field(
+        default_factory=lambda: ChatModelConfig(
+            # model="gpt-5-mini",
+            temperature=0,
+            # top_p=0.95,
+            seed=42,
+        ),
+    )
+
+    re_agent: ChatModelConfig = Field(
+        default_factory=lambda: ChatModelConfig(
+            # model="gpt-5-mini",
+            temperature=0,
+            # top_p=0.95,
+            seed=42,
+        ),
+    )
 
     planner: ChatModelConfig = Field(
         default_factory=lambda: ChatModelConfig(
