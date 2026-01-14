@@ -6,7 +6,7 @@ from src.models.operation import OperationResponse
 from src.models.planner import PlannerAgentOutput
 from src.models.tlc import TLCExecutionState
 from src.models.cc import CCExecutionState
-from src.models.re import REExecutionState
+# from src.models.re import REExecutionState
 
 class IDAIDetermine(BaseModel):
     matched_goal_type: GoalTypeEnum
@@ -88,6 +88,6 @@ class AgentState(BaseModel):
     # Executor namespaces
     tlc: TLCExecutionState = Field(default_factory=TLCExecutionState)
     cc: CCExecutionState = Field(default_factory=CCExecutionState)
-    re: REExecutionState = Field(default_factory=REExecutionState)
+    # re: REAgentGraphState = Field(default_factory=REAgentGraphState)
     # System Stage for Routing purpose
     mode: str | None = None

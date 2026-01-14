@@ -31,6 +31,12 @@ def create_talos_workflow() -> StateGraph:
     workflow.add_node("tlc_agent", node_mapper.tlc_agent.compiled)
     workflow.add_node("finalize_tlc_step", node_mapper.finalize_tlc_step_node)
 
+    # CC
+    workflow.add_node("cc_router", node_mapper.cc_router)
+    workflow.add_node("prepare_cc_step", node_mapper.prepare_cc_step_node)
+    workflow.add_node("cc_agent", node_mapper.cc_agent.compiled)
+    workflow.add_node("finalize_cc_step", node_mapper.finalize_cc_step_node)
+
     workflow.add_node("presenter", node_mapper.presenter_node)
     # workflow.add_node("checkpoint", node_mapper.survey_inspect)
 
@@ -67,12 +73,15 @@ def create_talos_workflow() -> StateGraph:
         {
             "planner": "planner",
             "tlc_router": "tlc_router",
+            "cc_router": "cc_router",
+            # "re_router": "re_router",
             # "lcms_router": "lcms_router", # e.g.
             "done": "presenter",
         },
     )
 
     workflow.add_edge("planner", "specialist_dispatcher")
+    workflow.add_edge("presenter", END)
 
     # TLC Agent
     workflow.add_edge("prepare_tlc_step", "tlc_agent")
@@ -87,7 +96,32 @@ def create_talos_workflow() -> StateGraph:
         },
     )
 
-    workflow.add_edge("presenter", END)
+    # CC Agent
+    workflow.add_edge("prepare_cc_step", "cc_agent")
+    workflow.add_edge("cc_agent", "finalize_cc_step")
+    workflow.add_edge("finalize_cc_step", "cc_router")
+    workflow.add_conditional_edges(
+        "cc_router",
+        node_mapper.route_cc_next_todo,
+        {
+            "prepare_cc_step": "prepare_cc_step",
+            "finalize_cc_step": "finalize_cc_step",
+            "done": "specialist_dispatcher",
+        },
+    )
+
+    # # RE Agent
+    # workflow.add_edge("prepare_re_step", "re_agent")
+    # workflow.add_edge("re_agent", "finalize_re_step")
+    # workflow.add_edge("finalize_re_step", "re_router")
+    # workflow.add_conditional_edges(
+    #     "re_router",
+    #     node_mapper.route_re_next_todo,
+    #     {
+    #         "prepare_re_step": "prepare_re_step",
+    #         "done": "specialist_dispatcher",
+    #     },
+    # )
 
     return workflow
 
@@ -134,7 +168,7 @@ if __name__ == "__main__":
 
         async def _run_test() -> None:
             next_input: AgentState | Command = AgentState(
-                messages=[HumanMessage(content="我正在进行水杨酸的乙酰化反应制备乙酰水杨酸帮我进行中控监测IPC")],
+                messages=[HumanMessage(content="我已经完成了tlc步骤，准备过个柱子")],
             )
 
             while True:

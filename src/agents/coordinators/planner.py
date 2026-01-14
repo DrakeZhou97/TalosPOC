@@ -104,8 +104,8 @@ class PlannerAgent:
         plan_steps = [
             PlanStep(
                 id=uuid.uuid4().hex,
-                title="TLC IPC monitoring (extract compounds + lookup Rf)",
-                executor=ExecutorKey.TLC_AGENT,
+                title="Column Chromatography",
+                executor=ExecutorKey.CC_AGENT,
                 args={},
                 status=ExecutionStatusEnum.NOT_STARTED,
                 output=None,

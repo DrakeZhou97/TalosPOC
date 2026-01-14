@@ -39,14 +39,7 @@ class TLCPhase(str, Enum):
 
 class CCPhase(str, Enum):
     COLLECTING = "collecting"
-    AWAITING_INFO = "awaiting_info"
-    AWAITING_CONFIRMATION = "awaiting_confirmation"
-    CONFIRMED = "confirmed"
-    DONE = "done"
-
-class REPhase(str, Enum):
-    COLLECTING = "collecting"
-    AWAITING_INFO = "awaiting_info"
-    AWAITING_CONFIRMATION = "awaiting_confirmation"
-    CONFIRMED = "confirmed"
+    EQUIPMENT_VALIDATED = "equipment_validated"
+    SPEC_CONFIRMED = "spec_confirmed"
+    PARAMS_CONFIRMED = "params_confirmed"
     DONE = "done"

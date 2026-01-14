@@ -2,12 +2,12 @@ from typing import Any
 
 import httpx
 from langchain.agents import create_agent
-from langchain.agents.structured_output import ProviderStrategy
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from src.models.cc import CCAgentGraphState, CCBeginSpec, CCMCPOutput, CCRecommendParams
+from src.models.enums import CCPhase
+from src.models.cc import CCAgentGraphState, CCBeginSpec, CCRecommendParams
 from src.models.operation import OperationInterruptPayload, OperationResumePayload
 from src.utils.logging_config import logger
 from src.utils.PROMPT import CC_AGENT_PROMPT
@@ -61,26 +61,26 @@ class CCAgent:
         subgraph = StateGraph(CCAgentGraphState)
 
         subgraph.add_node("extract_spec", self._extract_spec)
-        subgraph.add_node("free_timepoint_1", self._free_timepoint_1)
+        subgraph.add_node("free_timepoint_spec", self._free_timepoint_spec)
         subgraph.add_node("fetch_params", self._fetch_params)
-        subgraph.add_node("free_timepoint_2", self._free_timepoint_2)
+        subgraph.add_node("free_timepoint_params", self._free_timepoint_params)
 
         subgraph.add_edge(START, "extract_spec")
-        subgraph.add_edge("extract_spec", "free_timepoint_1")
+        subgraph.add_edge("extract_spec", "free_timepoint_spec")
         subgraph.add_conditional_edges( # TODO: 确认下这里逻辑怎么处理，能否根据前端点击confirm还是输入其他文本来判断
-            "free_timepoint_1",
-            self._route_free_timepoint_1,
+            "free_timepoint_spec",
+            self._route_free_timepoint_spec,
             {
-                "revise": "free_timepoint_1",
+                "revise": "free_timepoint_spec",
                 "confirm": "fetch_params",
             }
         )
-        subgraph.add_edge("fetch_params", "free_timepoint_2")
+        subgraph.add_edge("fetch_params", "free_timepoint_params")
         subgraph.add_conditional_edges(
-            "free_timepoint_2",
-            self._route_free_timepoint_2,
+            "free_timepoint_params",
+            self._route_free_timepoint_params,
             {
-                "revise": "free_timepoint_2",
+                "revise": "free_timepoint_params",
                 "confirm": END,
             }
         )
@@ -94,12 +94,12 @@ class CCAgent:
         )
 
     @staticmethod
-    def _route_free_timepoint_1(state: CCAgentGraphState) -> str:
-        return "confirm" if state.user_confirmed_1 else "revise"
+    def _route_free_timepoint_spec(state: CCAgentGraphState) -> str:
+        return "confirm" if state.cc.phase == CCPhase.SPEC_CONFIRMED else "revise"
 
     @staticmethod
-    def _route_free_timepoint_2(state: CCAgentGraphState) -> str:
-        return "confirm" if state.user_confirmed_2 else "revise"
+    def _route_free_timepoint_params(state: CCAgentGraphState) -> str:
+        return "confirm" if state.cc.phase == CCPhase.PARAMS_CONFIRMED else "revise"
 
     @staticmethod
     def _extract_spec(state: CCAgentGraphState) -> dict[str, Any]:
@@ -109,16 +109,16 @@ class CCAgent:
             tlc_data_json_path="/app/backend/tmp_api_examples/aspirin_tlc_data.json",
             column_size="40g",
         )
-        return {"payload": spec}
+        return {"cc": state.cc.model_copy(update={"payload": spec})}
 
-    def _free_timepoint_1(self, state: CCAgentGraphState) -> dict[str, Any]:
+    def _free_timepoint_spec(self, state: CCAgentGraphState) -> dict[str, Any]:
         """
         自由对话节点：
-        - 用户点击 confirm → user_confirmed_1 = True，进入下一阶段
-        - 用户继续对话 → user_confirmed_1 = False，循环回本节点
+        - 用户点击 confirm → cc.spec_confirmed = True，进入下一阶段
+        - 用户继续对话 → cc.spec_confirmed = False，循环回本节点
         """
         messages = state.messages
-        payload = state.payload
+        payload = state.cc.payload
 
         # 构建中断 payload
         interrupt_payload = OperationInterruptPayload(
@@ -136,10 +136,10 @@ class CCAgent:
 
         # 用户点击了 confirm 按钮
         if resume.approval:
-            return {"user_confirmed_1": True}
+            return {"cc": state.cc.model_copy(update={"phase": CCPhase.SPEC_CONFIRMED})}
         
         # 用户继续对话
-        updates: dict[str, Any] = {"user_confirmed_1": False}
+        updates: dict[str, Any] = {"cc": state.cc.model_copy(update={"phase": CCPhase.COLLECTING})}
 
         # 处理用户编辑的数据（如果有）
         if resume.data and isinstance(resume.data, dict):
@@ -147,7 +147,7 @@ class CCAgent:
             if edited_spec:
                 try:
                     new_payload = CCBeginSpec.model_validate(edited_spec)
-                    updates["payload"] = new_payload
+                    updates["cc"] = state.cc.model_copy(update={"payload": new_payload})
                     payload = new_payload  # 用于后续 LLM 上下文
                 except Exception:
                     logger.warning("Failed to parse edited spec from resume.data")
@@ -179,10 +179,10 @@ class CCAgent:
         """
         调用 MCP 获取推荐的 CC 参数。
         
-        - 成功：payload 替换为 CCRecommendParams
+        - 成功：cc.payload 替换为 CCRecommendParams
         - 失败：抛出异常（或可改为返回错误状态）
         """
-        if not isinstance(state.payload, CCBeginSpec):
+        if not isinstance(state.cc.payload, CCBeginSpec):
             raise TypeError("Payload must be a CCBeginSpec for fetching params")
 
         messages = state.messages
@@ -200,7 +200,7 @@ class CCAgent:
             #     column_volume=15.0,
             #     air_purge_time=2.0
             # )
-            result = get_recommended_params(state.payload)
+            result = get_recommended_params(state.cc.payload)
             logger.info(f"CC params fetched: {result}")
 
             # 添加系统消息记录
@@ -212,7 +212,7 @@ class CCAgent:
             )
 
             return {
-                "payload": result,
+                "cc": state.cc.model_copy(update={"payload": result}),
                 "messages": messages,
             }
 
@@ -220,14 +220,14 @@ class CCAgent:
             logger.exception("Failed to fetch CC recommended params")
             raise
 
-    def _free_timepoint_2(self, state: CCAgentGraphState) -> dict[str, Any]:
+    def _free_timepoint_params(self, state: CCAgentGraphState) -> dict[str, Any]:
         """
         自由对话节点：
-        - 用户点击 confirm → user_confirmed_2 = True，进入下一阶段
-        - 用户继续对话 → user_confirmed_2 = False，循环回本节点
+        - 用户点击 confirm → cc.params_confirmed = True，进入下一阶段
+        - 用户继续对话 → cc.params_confirmed = False，循环回本节点
         """
         messages = state.messages
-        payload = state.payload
+        payload = state.cc.payload
 
         # 构建中断 payload
         interrupt_payload = OperationInterruptPayload(
@@ -244,10 +244,10 @@ class CCAgent:
 
         # 用户点击了 confirm 按钮
         if resume.approval:
-            return {"user_confirmed_2": True}
+            return {"cc": state.cc.model_copy(update={"phase": CCPhase.PARAMS_CONFIRMED})}
         
         # 用户继续对话
-        updates: dict[str, Any] = {"user_confirmed_2": False}
+        updates: dict[str, Any] = {"cc": state.cc.model_copy(update={"phase": CCPhase.SPEC_CONFIRMED})}
 
         # 处理用户编辑的数据（如果有）
         if resume.data and isinstance(resume.data, dict):
@@ -255,7 +255,7 @@ class CCAgent:
             if edited_params:
                 try:
                     new_payload = CCRecommendParams.model_validate(edited_params)
-                    updates["payload"] = new_payload
+                    updates["cc"] = state.cc.model_copy(update={"payload": new_payload})
                     payload = new_payload  # 用于后续 LLM 上下文
                 except Exception:
                     logger.warning("Failed to parse edited params from resume.data")
@@ -333,8 +333,8 @@ if __name__ == "__main__":
                 if "messages" in state:
                     for msg in state["messages"][-3:]:  # 只显示最后3条消息
                         print(f"[{type(msg).__name__}]: {getattr(msg, 'content', str(msg))[:200]}")
-                if "payload" in state and state["payload"]:
-                    print(f"[Payload]: {state['payload']}")
+                if "cc" in state and state["cc"]:
+                    print(f"[CC]: {state['cc']}")
                 print("-" * 40)
 
             if not interrupted:

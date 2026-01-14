@@ -37,11 +37,15 @@ class CCMCPOutput(BaseModel):
 # region <CC Agent>
 
 
-class CCAgentGraphState(BaseModel):
-    messages: list[AnyMessage] = Field(default_factory=list)
+class CCExecutionState(BaseModel):
     payload: CCBeginSpec | CCRecommendParams | None = None
-    user_confirmed_1: bool = False
-    user_confirmed_2: bool = False
+    phase: CCPhase = CCPhase.COLLECTING
+
+
+class CCAgentGraphState(BaseModel):
+    # Shared
+    messages: list[AnyMessage] = Field(default_factory=list)
+    cc: CCExecutionState = Field(default_factory=CCExecutionState)
 
 
 # endregion

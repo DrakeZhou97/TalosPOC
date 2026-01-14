@@ -21,7 +21,7 @@ from src.agents.specialists.tlc_agent import TLCAgent
 from src.agents.specialists.cc_agent import CCAgent
 # from src.agents.specialists.re_agent import REAgent
 from src.models.core import AgentState
-from src.models.enums import AdmittanceState, ExecutionStatusEnum, ExecutorKey, TLCPhase, CCPhase, REPhase
+from src.models.enums import AdmittanceState, CCPhase, ExecutionStatusEnum, ExecutorKey, TLCPhase
 from src.models.planner import PlannerAgentOutput, PlanStep
 from src.models.tlc import TLCExecutionState
 from src.models.cc import CCExecutionState
@@ -36,6 +36,8 @@ STEP_MESSAGES = {
     "stage_dispatcher": "Determining the best workflow for your request...",
     "prepare_tlc_step_node": "Preparing TLC step for execution...",
     "finalize_tlc_step_node": "Finalizing TLC step results...",
+    "prepare_cc_step_node": "Preparing CC step for execution...",
+    "finalize_cc_step_node": "Finalizing CC step results...",
 }
 
 watch_dog = WatchDogAgent()
@@ -525,18 +527,28 @@ def cc_router(state: AgentState) -> dict[str, Any]:
 def route_cc_next_todo(state: AgentState) -> str:
     """Route to the CC next todo."""
 
-    if state.cc.spec is None and state.cc.phase != CCPhase.CONFIRMED:
+    if state.cc.phase == CCPhase.COLLECTING:
         return "prepare_cc_step"
-    if state.cc.phase == CCPhase.CONFIRMED:
-        return "done"
+    
+    if state.cc.phase == CCPhase.PARAMS_CONFIRMED:
+        return "finalize_cc_step"
 
     return "done"
 
-def prepare_cc_step_node(state: AgentState) -> dict[str, Any]:
+async def prepare_cc_step_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     """Update state value and validate device status."""
+    # Emit step progress to frontend (best-effort; ignore if no callback context)
+    with suppress(RuntimeError):
+        await copilotkit_emit_state(
+            config,
+            {
+                "current_step": "prepare_cc_step_node",
+                "step_message": STEP_MESSAGES["prepare_cc_step_node"],
+            },
+        )
     messages = MsgUtils.append_thinking(MsgUtils.ensure_messages(state), "[prepare_cc_step] Device status validated")
     return {
-        "cc": CCExecutionState(phase=CCPhase.COLLECTING),
+        "cc": CCExecutionState(phase=CCPhase.EQUIPMENT_VALIDATED),
         "messages": messages,
     }
 
@@ -544,7 +556,7 @@ def finalize_cc_step_node(state: AgentState) -> dict[str, Any]:
     """
     Finalize the current CC plan step after the CC subgraph completes.
 
-    This node expects `state.cc.spec` to have been produced/confirmed by the CC subgraph. It writes the confirmed spec into the current
+    This node expects `state.cc.payload` to have been produced/confirmed by the CC subgraph. It writes the confirmed payload into the current
     `PlanStep.output`, marks the step `COMPLETED`, and advances `plan_cursor`. It also sets `cc_phase=DONE` so upstream nodes can treat the CC
     execution as finished for this step.
 
@@ -552,29 +564,29 @@ def finalize_cc_step_node(state: AgentState) -> dict[str, Any]:
         state: Current workflow state.
 
     Returns:
-        A state patch with updated `plan`, `cc.phase=DONE`, and `plan_cursor` advanced by 1.
+        A state patch with updated `plan`, `cc.finalized=True`, and `plan_cursor` advanced by 1.
 
     Raises:
-        ValueError: If `state.cc.spec` is missing after the CC subgraph completes.
+        ValueError: If `state.cc.payload` is missing after the CC subgraph completes.
 
     """
     cursor, step = _get_current_step(state)
-    approved_spec = state.cc.spec
-    if approved_spec is None:
-        raise ValueError("Missing 'cc.spec' after executing CC subgraph")
+    approved_params = state.cc.payload
+    if approved_params is None:
+        raise ValueError("Missing 'cc.payload' after executing CC subgraph")
 
     step.output = {
         "agent": "cc_agent_subgraph",
         "executor": str(step.executor),
         "args": step.args,
-        "spec": approved_spec.model_dump(mode="json"),
+        "params": approved_params.model_dump(mode="json"),
     }
     step.status = ExecutionStatusEnum.COMPLETED
 
     logger.info("Finalized CC step cursor={} id={} executor={}", cursor, step.id, step.executor)
     return {
         "plan": state.plan,
-        "cc": state.cc.model_copy(update={"phase": CCPhase.DONE, "spec": approved_spec}),
+        "cc": state.cc.model_copy(update={"phase": CCPhase.DONE}),
         "plan_cursor": cursor + 1,
     }
 
