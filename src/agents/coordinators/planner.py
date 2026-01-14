@@ -104,8 +104,8 @@ class PlannerAgent:
         plan_steps = [
             PlanStep(
                 id=uuid.uuid4().hex,
-                title="Column Chromatography",
-                executor=ExecutorKey.CC_AGENT,
+                title="Rotary Evaporation",
+                executor=ExecutorKey.RE_AGENT,
                 args={},
                 status=ExecutionStatusEnum.NOT_STARTED,
                 output=None,

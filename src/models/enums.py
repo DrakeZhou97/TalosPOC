@@ -43,3 +43,10 @@ class CCPhase(str, Enum):
     SPEC_CONFIRMED = "spec_confirmed"
     PARAMS_CONFIRMED = "params_confirmed"
     DONE = "done"
+
+class REPhase(str, Enum):
+    COLLECTING = "collecting"
+    EQUIPMENT_VALIDATED = "equipment_validated"
+    SPEC_CONFIRMED = "spec_confirmed"
+    PARAMS_CONFIRMED = "params_confirmed"
+    DONE = "done"

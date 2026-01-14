@@ -168,7 +168,7 @@ if __name__ == "__main__":
 
         async def _run_test() -> None:
             next_input: AgentState | Command = AgentState(
-                messages=[HumanMessage(content="我已经完成了tlc步骤，准备过个柱子")],
+                messages=[HumanMessage(content="我想执行下旋蒸分离制备乙酰水杨酸")],
             )
 
             while True:
