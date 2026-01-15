@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from src.models.enums import CCPhase
 
 # region <CC MCP>
+# TODO: 一些参数可能其实是枚举类型，需要定义枚举类
 
 
 class CCBeginSpec(BaseModel):
